@@ -2,6 +2,8 @@ package takeover
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,6 +80,46 @@ func TestStrongMuteIsLiftedAfterwards(t *testing.T) {
 	e.Run(context.Background(), req(sp))
 	if calls.Load() < 2 || on.Load() || sp.lastVolume() != 40 {
 		t.Fatal(calls.Load(), on.Load(), sp.lastVolume())
+	}
+}
+
+// LX06 drops the stream it plays when its mute is lifted: nothing of the mute may reach the song.
+func TestMuteIsOverBeforeTheSongIsPushed(t *testing.T) {
+	e, sp, _ := setup(t)
+	e.Style = func(string) string { return HushStrong }
+	fails := 1
+	e.Deep = func(_ context.Context, _ string, on bool) error {
+		sp.mu.Lock()
+		defer sp.mu.Unlock()
+		if !on && fails > 0 {
+			fails--
+			return errors.New("lost")
+		}
+		sp.log(map[bool]string{true: "deep", false: "lift"}[on])
+		return nil
+	}
+	e.Run(context.Background(), req(sp))
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	lift, play := slices.Index(sp.calls, "lift"), slices.Index(sp.calls, "play")
+	if lift < 0 || play < lift || slices.Contains(sp.calls[play:], "lift") || slices.Contains(sp.calls[play:], "deep") || sp.volume != 40 {
+		t.Fatal(sp.calls, sp.volume)
+	}
+}
+
+// A mute still on afterwards is lifted before the volume returns, which the lift may change.
+func TestLiftingAMuteThatBringsBackSilence(t *testing.T) {
+	e, sp, _ := setup(t)
+	e.device("d1").deepOn = true
+	e.Deep = func(context.Context, string, bool) error {
+		time.AfterFunc(100*time.Millisecond, func() { sp.mu.Lock(); sp.volume = 0; sp.mu.Unlock() })
+		return nil
+	}
+	e.putBack("d1", 40)
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.volume != 40 {
+		t.Fatal(sp.volume, sp.volumes)
 	}
 }
 

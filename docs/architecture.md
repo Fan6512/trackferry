@@ -83,7 +83,7 @@ Go 单进程：对话轮询、路由、音频服务和管理接口都在一个�
 - **音箱列表**：依次尝试 `device_list` 与 `device_list?master=1`，任何一个返回非空就采用并记录用了哪个。同步结果分为：找到音箱、账号下为空、需要重新登录、网络或接口错误。新发现的音箱默认“不接入”；从账号消失的音箱保留设置并标为“已不在账号中”，不删除。
 - **管理员**：首次打开要用一次性初始化码（容器日志与 `data/private/setup_code`）设置管理密码，防止局域网里其他人抢先。密码 PBKDF2-SHA256 60 万次；会话 Cookie HttpOnly、SameSite=Strict，库里只存哈希；写操作要求 `X-Requested-With: trackferry` 头；连续 5 次失败限速 15 分钟。忘记密码用 `docker exec trackferry /trackferry reset-admin`。脚本仍可用 `data/private/admin_token` 的 Bearer 令牌。
 - **接管闭环**（`internal/takeover`，每台音箱串行，新指令取消旧的）：
-  1. 用上次记下的音量直接静音，同时读状态核对；没有记录才先读（读不到就不静音）。原音量先写入 `pending_volume` 表。`devices.hush` 为加强或等小爱说完时，再经米家静音和暂停（OH2P 默认加强），推送前等它落定；
+  1. 用上次记下的音量直接静音，同时读状态核对；没有记录才先读（读不到就不静音）。原音量先写入 `pending_volume` 表。`devices.hush` 为加强或等小爱说完时，再经米家静音和暂停（OH2P 默认加强），推送前等它落定并解除：LX06 实测会在静音解除后 20 ms 内断开正在放的流，所以不用米家静音，别的型号也不在歌起播后解除；
   2. 与静音同时开始，`pause`、`stop` 并发，连做两次，打断小爱正在说的话和刚排进的播放；
   3. 静音状态下推送我们的流：LX06、OH2P 等走 `player_play_music`（带固定 audio_id，可在状态里认出是不是我们在放），其余型号走 `player_play_url`；
   4. 守护窗口约 8 秒，每 700ms 读一次状态，发现小爱迟到的歌单抢回播放器就再停再推，最多重推 2 次，超过判失败；

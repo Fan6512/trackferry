@@ -11,11 +11,12 @@ import (
 type hushSpec struct{ muteS, muteP, pauseS, pauseA int }
 
 // hushSpecs by model, from the MIoT specification of each: the mute property and the pause
-// action. Models without a mute property are not here.
+// action. Models without a mute property are not here. Nor is
+// LX06: it obeys the volume, and drops the stream it plays once its mute is lifted.
 var hushSpecs = map[string]hushSpec{
 	"OH2P": {2, 2, 3, 3}, "OH2": {2, 2, 3, 3},
 	"L05B": {2, 2, 3, 3}, "L05C": {2, 2, 3, 3}, "L15A": {2, 2, 3, 3}, "L16A": {2, 2, 3, 3}, "L17A": {2, 2, 3, 3},
-	"LX06": {2, 2, 3, 2}, "LX04": {2, 2, 3, 2}, "LX05": {2, 2, 3, 2}, "LX5A": {2, 2, 3, 2}, "L04M": {2, 2, 3, 2},
+	"LX04": {2, 2, 3, 2}, "LX05": {2, 2, 3, 2}, "LX5A": {2, 2, 3, 2}, "L04M": {2, 2, 3, 2},
 	"L06A": {2, 2, 3, 2}, "X08A": {2, 2, 4, 2}, "S12": {2, 2, 4, 1}, "LX01": {2, 2, 4, 1}, "L7A": {2, 2, 4, 1},
 }
 

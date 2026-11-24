@@ -66,7 +66,7 @@ function HushPick({ device, onChange }: { device: Device; onChange: (d: Device) 
   return (
     <div className="hush">
       <span>压住小爱的回答</span>
-      <Pick label={`${deviceTitle(device)}压住小爱回答的方式`} value={device.hush} choices={hushes} onPick={set} />
+      <Pick label={`${deviceTitle(device)}压住小爱回答的方式`} value={device.hush} choices={hushes.filter((h) => h.value !== 'strong' || device.can_hush)} onPick={set} />
       <small>{hushes.find((h) => h.value === device.hush)?.says}</small>
       {error && <p className="field-error" role="alert">{error}</p>}
     </div>
@@ -105,7 +105,7 @@ export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?
         </p>
         {device.in_account && device.mode !== 'off' && <Buttons device={device} />}
         <ModeSwitch device={device} onChange={onChange} />
-        {device.in_account && device.can_hush && device.mode === 'takeover' && <HushPick device={device} onChange={onChange} />}
+        {device.in_account && device.mode === 'takeover' && <HushPick device={device} onChange={onChange} />}
         <p className="speaker-hint">
           {device.in_account ? modeHint[device.mode] : '设置会保留，重新绑定后恢复。'}
           {watch && device.mode !== 'off' && <small className={watch.state === 'error' ? 'bad' : ''}>{watchText[watch.state]}{watch.error ? `：${watch.error}` : watch.recorded > 0 ? `，启动后听到 ${watch.recorded} 次点歌` : ''}</small>}

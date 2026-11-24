@@ -142,7 +142,7 @@ func (s *Server) deviceHush(w http.ResponseWriter, r *http.Request, hush string)
 	case hush != takeover.HushChosenNormal && hush != takeover.HushStrong && hush != takeover.HushWait:
 		writeError(w, http.StatusBadRequest, "bad_hush", "hush 只能是 normal、strong 或 wait")
 		return
-	case hush != takeover.HushChosenNormal && !xiaomi.CanHush(d.Hardware, d.MiotDID):
+	case hush == takeover.HushStrong && !xiaomi.CanHush(d.Hardware, d.MiotDID):
 		writeError(w, http.StatusConflict, "cannot_hush", "这个型号不能通过米家静音")
 		return
 	}
@@ -150,7 +150,7 @@ func (s *Server) deviceHush(w http.ResponseWriter, r *http.Request, hush string)
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	if hush != takeover.HushChosenNormal {
+	if hush != takeover.HushChosenNormal && xiaomi.CanHush(d.Hardware, d.MiotDID) {
 		go s.Xiaomi.WarmHome(context.WithoutCancel(r.Context()))
 	}
 	d.Hush = hush

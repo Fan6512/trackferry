@@ -25,6 +25,7 @@ export function Library({ place, devices, navigate }: { place: Place; devices: D
 let keptShelf: Shelf | null = null;
 let keepNext = false;
 let keptQuery = '';
+let keptAsked = '';
 const keptAlbums = new Map<string, Album>();
 const keep = (as: Album[] | null | undefined) => as?.forEach((a) => keptAlbums.set(a.id, a));
 
@@ -88,27 +89,48 @@ function Tracks({ tracks, devices, numbered = false, showAlbum = false, navigate
 
 const ONLINE = 'trackferry.search.online';
 
-/** Songs the online sources know for what was typed. */
-function Online({ q, devices }: { q: string; devices: Device[] }) {
-  const [res, setRes] = useState<{ q: string; songs: OnlineSong[]; sources: OnlineOutcome[] } | null>(null);
+type OnlineFound = { songs: OnlineSong[]; sources: OnlineOutcome[] };
+const isDown = (s: OnlineOutcome) => s.state === 'error' || s.state === 'open';
+const ONLINE_KEPT = 5 * 60_000;
+const keptOnline = new Map<string, { at: number; res: OnlineFound }>();
+/** What the online sources answered a short while ago. */
+function answered(q: string) {
+  const k = keptOnline.get(q);
+  return k && Date.now() - k.at < ONLINE_KEPT ? k.res : null;
+}
+
+/** Songs the online sources know for q. They are asked only when the listener says so: asked is
+    what for, and a higher turn asks again. */
+function Online({ q, asked, turn, ask, devices }: { q: string; asked: string; turn: number; ask: () => void; devices: Device[] }) {
+  const [res, setRes] = useState<OnlineFound | null>(() => answered(q));
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let on = true;
+    const had = answered(q);
+    setRes(had);
     setError(null);
-    const t = setTimeout(() => {
-      api.searchOnline(q).then((r) => { if (on) setRes({ q, ...r }); }).catch((e) => { if (on) setError((e as ApiError).message); });
-    }, 600);
-    return () => { on = false; clearTimeout(t); };
-  }, [q]);
-  const busy = !error && res?.q !== q;
-  const down = res?.sources.filter((s) => s.state === 'error' || s.state === 'open') ?? [];
+    setBusy(false);
+    if (had || asked !== q) return;
+    setBusy(true);
+    api.searchOnline(q).then((r) => {
+      if (!r.sources.some(isDown)) {
+        if (keptOnline.size >= 30) keptOnline.delete(keptOnline.keys().next().value!);
+        keptOnline.set(q, { at: Date.now(), res: r });
+      }
+      if (on) { setRes(r); setBusy(false); }
+    }, (e) => { if (on) { setError((e as ApiError).message); setBusy(false); } });
+    return () => { on = false; };
+  }, [q, asked, turn]);
+  const down = res?.sources.filter(isDown) ?? [];
   return (
     <section className="shelf online">
       <h2>在线源{busy && <span className="spinner spinner-tiny" />}</h2>
+      {!res && !busy && <button type="button" className="btn btn-quiet online-ask" onClick={ask}>{error ? '再搜一次' : `在线搜“${q}”`}</button>}
       {error && <p className="field-error" role="alert">{error}</p>}
       {res && !busy && res.songs.length === 0 && <p className="muted">在线源也没有找到。</p>}
       {res && res.songs.length > 0 && (
-        <ol className={`tracks online-list ${busy ? 'stale' : ''}`}>
+        <ol className="tracks online-list">
           {res.songs.map((s) => (
             <li key={s.key} className={s.restricted ? 'locked' : ''}>
               <span className="track-lead"><SourceIcon name={s.source} />{!s.restricted && <Play send={(d) => api.play(d, { source: 'online', id: s.key })} title={s.title} devices={devices} />}</span>
@@ -119,7 +141,7 @@ function Online({ q, devices }: { q: string; devices: Device[] }) {
           ))}
         </ol>
       )}
-      {!busy && down.length > 0 && <p className="muted">{down.map((s) => stopLabel[s.source as OnlineSong['source']]).join('、')}这次没有回应。</p>}
+      {!busy && down.length > 0 && <p className="muted">{down.map((s) => stopLabel[s.source as OnlineSong['source']]).join('、')}这次没有回应。<button type="button" className="btn btn-quiet btn-small" onClick={ask}>再搜一次</button></p>}
     </section>
   );
 }
@@ -227,6 +249,11 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
   const [q, setQ] = useState(keptQuery);
   const [found, setFound] = useState<Track[] | null>(null);
   const [online, setOnline] = useState(() => { try { return localStorage.getItem(ONLINE) === '1'; } catch { return false; } });
+  const [asked, setAsked] = useState({ q: keptAsked, turn: 0 });
+  const ask = () => {
+    keptAsked = q.trim();
+    setAsked((a) => ({ q: keptAsked, turn: a.turn + 1 }));
+  };
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
   const lead = shelf?.newest?.find((a) => a.cover) ?? shelf?.wall?.[0];
@@ -302,13 +329,13 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
       <header className="lib-head">
         <h1><span className="num">{n(running ? Math.max(lib.seen, lib.tracks) : lib.tracks)}</span> 首歌</h1>
         <p className="lib-sub">{running ? '正在从飞牛音乐同步' : <>{shelf && shelf.albums > 0 && <>{n(shelf.albums)} 张专辑，</>}{n(lib.artists)} 位歌手{fn.feiniu.linked && <>，来自飞牛音乐</>}</>}{lack > 0 && <a href="#/library/missing" onClick={(e) => { e.preventDefault(); navigate({ page: 'library', kind: 'missing' }); }}>缺 <span className="num">{n(lack)}</span> 首</a>}</p>
-        <div className="lib-search">
+        <form className="lib-search" role="search" onSubmit={(e) => { e.preventDefault(); if (online) ask(); (document.activeElement as HTMLElement | null)?.blur(); }}>
         <label>
           <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="6" fill="none" stroke="currentColor" strokeWidth="2" /><path d="M13 13l5 5" stroke="currentColor" strokeWidth="2" /></svg>
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="歌名、歌手、专辑" aria-label="搜索曲库" maxLength={100} />
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={online ? '回车搜在线源' : '歌名、歌手、专辑'} enterKeyHint="search" aria-label="搜索曲库" maxLength={100} />
         </label>
-        <label className="lib-online"><input type="checkbox" checked={online} onChange={(e) => { setOnline(e.target.checked); try { localStorage.setItem(ONLINE, e.target.checked ? '1' : ''); } catch { /* for this visit only */ } }} />在线源</label>
-        </div>
+        <label className="lib-online"><input type="checkbox" checked={online} onChange={(e) => { setOnline(e.target.checked); if (e.target.checked && q.trim()) ask(); try { localStorage.setItem(ONLINE, e.target.checked ? '1' : ''); } catch { /* for this visit only */ } }} />在线源</label>
+        </form>
       </header>
       {error && <Notice tone="error" title={error} />}
       {(!fn.feiniu.linked || fn.feiniu.expired) && (
@@ -321,7 +348,7 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
         <section className="found">
           {found.length === 0 ? <p className="muted">曲库里没有“{q.trim()}”。</p> : <Tracks tracks={found} devices={devices} showAlbum navigate={navigate} />}
           {found.length === 50 && <p className="muted center">只列前 50 首，写详细些。</p>}
-          {online && q.trim() && <Online q={q.trim()} devices={devices} />}
+          {online && q.trim() && <Online q={q.trim()} asked={asked.q} turn={asked.turn} ask={ask} devices={devices} />}
         </section>
       ) : (
         <>

@@ -441,3 +441,9 @@ h1 { font-weight: 480; } h2 { font-weight: 520; } b { font-weight: 540; }
 .login-who { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 .login-keep { display: flex; align-items: center; gap: 12px; min-height: 44px; cursor: pointer; } .login-keep input { width: 20px; height: 20px; flex: none; accent-color: var(--stone); } .login-keep small { display: block; color: var(--ink3); }
 @media (max-width: 760px) { .river-tall .rn-src > span, .river-tall .rn-src.hit > span { max-width: 56px; } .river-tall .rn-src > i { width: 36px; height: 36px; } }
+
+/* ---- installed ---- */
+.installed { touch-action: pan-x pan-y; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+/* iOS zooms in on a focused field with smaller text. */
+@media (pointer: coarse) { :is(input, textarea, select):not([type=checkbox], [type=radio], [type=range]) { font-size: max(16px, 1em); } }
+.online-ask { margin-top: 12px; }

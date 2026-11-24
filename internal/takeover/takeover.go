@@ -154,6 +154,8 @@ type device struct {
 	quieted int        // the volume they turned down, 0: none
 	deep    sync.Mutex
 	deepOn  bool // muted through Mi Home
+	// deepKnown: deepOn tells; until then an earlier process may have left a mute.
+	deepKnown bool
 }
 
 // New returns an Engine.
@@ -645,11 +647,20 @@ func (e *Engine) putBack(dev string, volume int) (int, error) {
 		if !pending {
 			v = volume
 		}
+		// Usually lifted long since (deepened). If not, first: it may change the volume.
+		lifted, lift := e.undeepen(dev)
 		c, cancel := context.WithTimeout(bg, 6*time.Second)
 		err = e.sp.SetVolume(c, dev, v)
+		if err == nil && lifted && v > 0 {
+			// And it may take effect after it was answered.
+			e.sleep(c, liftLag)
+			if p, serr := e.sp.PlayStatus(c, dev); serr != nil || p.Volume == 0 {
+				err = e.sp.SetVolume(c, dev, v)
+			}
+		}
 		cancel()
 		if err == nil {
-			err = e.undeepen(dev)
+			err = lift
 		}
 		e.know(dev, v)
 		if volume = v; err != nil {
@@ -663,6 +674,9 @@ func (e *Engine) putBack(dev string, volume int) (int, error) {
 	}
 	return volume, err
 }
+
+// liftLag is how long after lifting a mute the volume is looked at again.
+const liftLag = 400 * time.Millisecond
 
 // hold marks a speaker's volume as being looked after and returns what ends that.
 func (e *Engine) hold(dev string) func() {
@@ -725,15 +739,19 @@ func (e *Engine) recoverVolume(ctx context.Context, dev string, v int) {
 	}
 	c, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
+	// Lifting the mute may change the volume, so it comes before looking.
+	if _, err := e.undeepen(dev); err != nil {
+		return
+	}
+	if e.style(dev) != HushNormal {
+		if e.Unhush(ctx, dev) != nil {
+			e.log.Warn("接管　没能确认米家静音已解除")
+		}
+		e.sleep(c, liftLag)
+	}
 	p, err := e.sp.PlayStatus(c, dev)
 	if err != nil || e.held(dev) {
 		return
-	}
-	if e.undeepen(dev) != nil {
-		return
-	}
-	if e.style(dev) != HushNormal && e.Unhush(ctx, dev) != nil {
-		e.log.Warn("接管　没能确认米家静音已解除")
 	}
 	if p.Volume > 0 { // somebody turned it up already, or the mute never arrived
 		e.st.ClearPendingVolume(ctx, dev)

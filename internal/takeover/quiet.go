@@ -15,7 +15,7 @@ import (
 const (
 	HushNormal = ""       // volume to nothing, and stop
 	HushStrong = "strong" // also mute and pause through Mi Home
-	HushWait   = "wait"   // as strong, and the song waits until she is done
+	HushWait   = "wait"   // as strong where that is possible, and the song waits until she is done
 )
 
 // HushChosenNormal is how the choice of HushNormal is stored: nothing stored leaves it to the model.
@@ -24,7 +24,7 @@ const HushChosenNormal = "normal"
 // HushStyle is what a stored choice means for a speaker.
 func HushStyle(stored, hardware, did string) string {
 	switch {
-	case !xiaomi.CanHush(hardware, did) || stored == HushChosenNormal:
+	case stored == HushChosenNormal, stored != HushWait && !xiaomi.CanHush(hardware, did):
 		return HushNormal
 	case stored == "" && xiaomi.Stubborn(hardware):
 		return HushStrong
@@ -159,6 +159,7 @@ func (e *Engine) deepen(dev string, d *device) {
 		return
 	}
 	d.deep.Lock()
+	d.deepKnown = true
 	go func() {
 		defer d.deep.Unlock()
 		c, cancel := context.WithTimeout(context.Background(), deepTimeout)
@@ -173,31 +174,36 @@ func (e *Engine) deepen(dev string, d *device) {
 	}()
 }
 
-// deepened waits for a Mi Home mute on its way: its pause must not reach our song.
+// deepened ends a Mi Home mute before our song is pushed, waiting for one on its way. Neither
+// its pause nor its end may reach the song: LX06 was seen to drop the stream within 20 ms of
+// the mute being lifted, while claiming to play. The volume stays at nothing.
 func (e *Engine) deepened(dev string) {
-	d := e.device(dev)
-	d.deep.Lock()
-	defer d.deep.Unlock()
+	for range 2 {
+		if _, err := e.undeepen(dev); err == nil {
+			return
+		} else {
+			e.log.Warn("接管　米家静音没能在放歌前解除", "原因", describe(err))
+		}
+	}
 }
 
 // undeepen takes the mute back, after one that is still on its way.
-func (e *Engine) undeepen(dev string) error {
+func (e *Engine) undeepen(dev string) (lifted bool, err error) {
 	if e.Deep == nil {
-		return nil
+		return false, nil
 	}
 	d := e.device(dev)
 	d.deep.Lock()
 	defer d.deep.Unlock()
 	if !d.deepOn {
-		return nil
+		return false, nil
 	}
 	c, cancel := context.WithTimeout(context.Background(), deepTimeout)
 	defer cancel()
-	err := e.Deep(c, dev, false)
-	if err == nil {
+	if err = e.Deep(c, dev, false); err == nil {
 		d.deepOn = false
 	}
-	return err
+	return err == nil, err
 }
 
 // Unhush lifts a mute that an earlier setting, or an earlier process, may have left.
@@ -205,6 +211,13 @@ func (e *Engine) Unhush(ctx context.Context, dev string) error {
 	if e.Deep == nil {
 		return nil
 	}
+	d := e.device(dev)
+	d.deep.Lock()
+	defer d.deep.Unlock()
+	if d.deepKnown { // deepOn tells, and a song may be playing
+		return nil
+	}
+	d.deepKnown = true
 	c, cancel := context.WithTimeout(ctx, 2*deepTimeout)
 	defer cancel()
 	return e.Deep(c, dev, false)
