@@ -54,6 +54,13 @@ func Handler() http.Handler {
 				if strings.HasPrefix(p, "assets/") {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				}
+				switch p {
+				case "sw.js":
+					w.Header().Set("Cache-Control", "no-cache")
+				case "manifest.webmanifest":
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Content-Type", "application/manifest+json")
+				}
 				if z, ok := packed[p]; ok {
 					w.Header().Set("Vary", "Accept-Encoding")
 					if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {

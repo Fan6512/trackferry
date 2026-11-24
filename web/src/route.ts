@@ -1,7 +1,7 @@
 import type { Candidate, Layer, LayerName, LayerState, Route, RunOutcome, TakeoverRun } from './api';
 
-export const stops: LayerName[] = ['library', 'kuwo', 'kugou', 'migu', 'xiaomi'];
-export const stopLabel: Record<LayerName, string> = { library: '曲库', kuwo: '酷我', kugou: '酷狗', migu: '咪咕', xiaomi: '小爱' };
+export const stops: LayerName[] = ['library', 'kuwo', 'kugou', 'migu', 'netease', 'xiaomi'];
+export const stopLabel: Record<LayerName, string> = { library: '曲库', kuwo: '酷我', kugou: '酷狗', migu: '咪咕', netease: '网易云', xiaomi: '小爱' };
 
 const stateLabel: Record<LayerState, string> = {
   hit: '有', miss: '没有', ambiguous: '同名', restricted: '会员', error: '出错', timeout: '超时', disabled: '已关', open: '暂停', skipped: '', asking: '在问',
@@ -72,11 +72,12 @@ const outcomes: Record<RunOutcome, { text: string; tone: 'ok' | 'warn' | 'bad' |
 };
 
 export function outcome(run: TakeoverRun) {
+  if (run.outcome === 'cancelled' && run.detail === '按了停止') return { text: '已停止', tone: '' as const };
   return outcomes[run.outcome] ?? { text: run.outcome, tone: '' as const };
 }
 
 const stepNames: Record<string, string> = {
-  status: '读取状态', mute: '静音', stop1: '停止小爱', stop2: '再停一次', play: '推送音频', fetched: '音箱取流',
+  status: '读取状态', mute: '静音', stop1: '停止小爱', stop2: '再停一次', wait: '等小爱说完', play: '推送音频', fetched: '音箱取流',
   foreign: '小爱抢回，再停', replay: '重新推送', confirmed: '确认在播', restore: '恢复音量', cancelled: '被新口令取代',
   ended: '放完', paused: '停了', continued: '又响了', talked: '有人和小爱说话', resume: '接着放', stopped: '停下了', released: '让给小爱',
 };
@@ -90,7 +91,7 @@ export function landedAt(run: TakeoverRun) {
 
 /** Counts where requests ended. */
 export function tally(routes: (Route | null)[]) {
-  const n: Record<LayerName, number> = { library: 0, kuwo: 0, kugou: 0, migu: 0, xiaomi: 0 };
+  const n: Record<LayerName, number> = { library: 0, kuwo: 0, kugou: 0, migu: 0, netease: 0, xiaomi: 0 };
   for (const r of routes) if (r) n[r.decision === 'native' ? 'xiaomi' : (r.source ?? 'library')]++;
   return n;
 }

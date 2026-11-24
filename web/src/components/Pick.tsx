@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import './pick.css';
 
 export interface Choice<T> { value: T; label: string }
 
@@ -37,7 +38,7 @@ export function Pick<T extends string | number>({ value, choices, label, onPick 
     e.preventDefault();
   };
   return (
-    <span className="pick" ref={box}>
+    <span className="choose" ref={box}>
       <button type="button" className="pick-btn" role="combobox" aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id : undefined}
         aria-activedescendant={open ? `${id}-${at}` : undefined} onClick={() => (open ? setAt(null) : show())} onKeyDown={key} onBlur={() => setAt(null)}>
         <span>{choices[now]?.label}</span>

@@ -16,7 +16,7 @@
 | `GET /healthz/live` | 进程在运行 |
 | `GET /healthz/ready` | 数据库与目录可用，含版本 |
 | `GET /api/session` | 登录状态与版本 |
-| `POST /api/setup` · `/api/login` · `/api/logout` | 初始化、登录、退出 |
+| `POST /api/setup` · `/api/login` · `/api/logout` | 初始化、登录、退出。登录可带 `remember`：`true` 180 天，`false` 随浏览器关闭失效（最长 12 小时），不写 30 天 |
 | `GET /stream/<令牌>` | 音箱取歌 |
 
 ## 点歌与音箱
@@ -27,9 +27,11 @@
 | `PATCH /api/commands/{id}` | 标注小爱当时的反应 |
 | `POST /api/route/try` `{"text":"播放晴天"}` | 试一句，不出声 |
 | `GET /api/intent` · `POST /api/intent` | 说法示例；解释一句话 |
-| `GET /api/devices` · `POST /api/devices/sync` · `PATCH /api/devices/{id}` | 音箱列表、同步、改模式或别名 |
+| `GET /api/devices` · `POST /api/devices/sync` · `PATCH /api/devices/{id}` | 音箱列表、同步、改模式、别名，或压住小爱的方式 `{"hush":"normal\|strong\|wait"}` |
 | `POST /api/devices/{id}/takeover-test` | 接管测试，会出声 |
 | `GET·POST /api/devices/{id}/control` | 播放状态与音量；控制：`{"action":"play\|pause\|stop\|wake"}` 或 `{"action":"volume","volume":35}`，成功返回 204 |
+| `POST /api/devices/{id}/play` `{"source":"favorites\|playlist\|artist\|album\|online","id":"","name":""}` | 把收藏、歌单、专辑、歌手或一首线上的歌送到音箱；`id` 为歌单、专辑或线上歌曲，`name` 为歌手 |
+| `GET·PUT /api/playing` `{"artist":true,"after":false,"hours":3}` | 连续播放的设置，`hours` 为 0 不限；没写的不变 |
 | `GET /api/takeover/runs?limit=` | 接管经过 |
 | `GET /api/observer` | 监听状态 |
 | `GET /api/live` | 实时事件（SSE）：`hello` 全量，`flow` 一条点歌的变化，`pulse` 一次监听 |
@@ -40,12 +42,16 @@
 | --- | --- |
 | `GET /api/library` · `POST /api/library/scan` | 状态；同步 |
 | `GET /api/library/search?q=` · `/shelf` · `/albums/{id}` · `/artist` | 搜索与浏览 |
+| `GET /api/library/favorites` · `/playlists` · `/playlists/{guid}` | 收藏、歌单、歌单里的歌 |
+| `GET /api/library/online?q=` | 搜在线源 |
 | `GET /api/library/tracks/{id}/lyrics` | 歌词 |
 | `GET /api/library/missing` · `/api/library/missing.csv` | 缺歌清单（`owned` 为已补上）；导出还缺的 |
 | `GET /api/cache` · `PUT` `{"limit_mb": 1024}` · `DELETE` | 线上歌曲缓存的用量；上限，`0` 为关闭，`-1` 为不限；清空 |
 | `GET·PUT /api/library/tracks/{id}/favorite` | 收藏 |
 | `GET /api/cover/{id}` | 封面 |
-| `PATCH /api/sources/{kuwo\|kugou\|migu}` | 音源开关 |
+| `PATCH /api/sources/{kuwo\|kugou\|migu\|netease}` | 音源开关 |
+| `GET / DELETE /api/sources/netease/account` | 网易云登录状态 / 退出 |
+| `POST / GET / DELETE /api/sources/netease/qr` | 取二维码内容 / 查扫码进度（waiting、scanned、expired、done）/ 取消 |
 | `GET·POST·DELETE /api/feiniu` · `GET /api/feiniu/discover` | 飞牛音乐登录与查找 |
 
 ## 账号与系统

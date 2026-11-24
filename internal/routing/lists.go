@@ -204,3 +204,52 @@ func (r *Router) Put(ctx context.Context, id int64, name string, on bool) (list 
 	changed, err = r.Lists.PutInPlaylist(ctx, p.GUID, t.GUID, on)
 	return p.Name, changed, err
 }
+
+// shuffled puts ids in random order, first at the beginning.
+func shuffled(ids []int64, first int64) []int64 {
+	out := []int64{first}
+	for _, id := range ids {
+		if id != first {
+			out = append(out, id)
+		}
+	}
+	rand.Shuffle(len(out)-1, func(i, j int) { out[i+1], out[j+1] = out[j+1], out[i+1] })
+	return out
+}
+
+// Collect lists the songs of a playlist of 飞牛音乐 that are in the library.
+func (r *Router) Collect(ctx context.Context, guid string) (string, []int64, error) {
+	if r.Lists == nil || !r.Lists.Linked() {
+		return "", nil, errors.New("没有连接飞牛音乐")
+	}
+	all, err := r.Lists.Playlists(ctx)
+	if err != nil {
+		return "", nil, fmt.Errorf("没能读到飞牛音乐的歌单：%w", err)
+	}
+	for _, p := range all {
+		if p.GUID != guid {
+			continue
+		}
+		songs, err := r.Lists.PlaylistSongs(ctx, guid)
+		if err != nil {
+			return "", nil, fmt.Errorf("没能读到歌单“%s”：%w", p.Name, err)
+		}
+		ids := []int64{}
+		for _, s := range songs {
+			if t, ok := r.Library.ByPath(library.RemotePrefix + s.GUID); ok {
+				ids = append(ids, t.ID)
+			}
+		}
+		return p.Name, ids, nil
+	}
+	return "", nil, errors.New("没有这个歌单了")
+}
+
+// FromOnline is the route of an online song picked by hand.
+func FromOnline(f *online.Found) *Route {
+	c := f.Candidate
+	rt := &Route{Layers: []Layer{{Name: c.Source, State: online.StateHit, Candidates: []Candidate{}}},
+		asked: askedKey(intent.Intent{Title: c.Title, Artist: c.Artist}, c.Title)}
+	rt.takeOnline(f)
+	return rt
+}

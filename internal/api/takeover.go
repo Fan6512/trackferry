@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,28 +31,12 @@ func (s *Server) takeoverTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_source", "source 只能是 tone、library 或 track")
 		return
 	}
-	if !s.Xiaomi.Status().Linked {
-		writeError(w, http.StatusConflict, "not_linked", "还没有关联小米账号")
-		return
-	}
-	d, err := s.Store.Device(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "no_device", "没有这台音箱")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if !d.InAccount || d.Mode == store.ModeOff {
-		writeError(w, http.StatusConflict, "device_off", "这台音箱没有接入。先在音箱页把它设为「观察」")
-		return
-	}
-	if err := s.Stream.Ready(); err != nil {
-		writeError(w, http.StatusConflict, "no_public_url", "音箱不知道从哪里取音频：请在 config.yaml 里设置 public_base_url（音箱能访问到的 NAS 地址，例如 http://192.168.1.10:18561）后重启")
+	d, ok := s.target(w, r)
+	if !ok {
 		return
 	}
 	var h *stream.Handle
+	var err error
 	var song *store.Song
 	kind := "test"
 	length := time.Duration(0) // only the tone is stopped by the clock
@@ -91,7 +74,11 @@ func (s *Server) takeoverTest(w http.ResponseWriter, r *http.Request) {
 	}
 	tr := s.Live.Begin(live.Flow{Kind: kind, DeviceID: d.DeviceID, Device: firstNonEmpty(d.Alias, d.Name), Said: h.Label})
 	takeover.Follow(h, tr)
-	run, err := s.Engine.Start(r.Context(), takeover.Request{DeviceID: d.DeviceID, Hardware: d.Hardware, Kind: kind, Trace: tr, Song: song,
+	var ended func(takeover.End)
+	if song != nil && s.Dispatcher != nil {
+		ended = s.Dispatcher.After(d.DeviceID, d.Hardware, song.TrackID, true)
+	}
+	run, err := s.Engine.Start(r.Context(), takeover.Request{DeviceID: d.DeviceID, Hardware: d.Hardware, Kind: kind, Trace: tr, Song: song, Ended: ended,
 		Track: takeover.Track{URL: h.URL, Label: h.Label, Fetched: h.Fetched(), Restarted: h.Restarted(), Duration: length,
 			Length: h.Duration, Lost: h.Lost, Resume: takeover.Resumer(h, tr)}})
 	if err != nil {

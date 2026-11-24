@@ -61,7 +61,7 @@ func (e *Engine) hush(ctx context.Context, dev string, gen int) func() {
 		return func() {} // a starting run is holding the volume down already
 	}
 	restore := func() {}
-	if p, err := e.sp.PlayStatus(ctx, dev); err == nil && p.Volume > 0 && e.st.SetPendingVolume(bg, dev, p.Volume, e.now()) == nil {
+	if m := e.mute(ctx, dev); m.muted && !m.inherited {
 		restore = func() {
 			e.mu.Lock()
 			newer := e.devs[dev] != nil && e.devs[dev].gen != gen
@@ -69,16 +69,14 @@ func (e *Engine) hush(ctx context.Context, dev string, gen int) func() {
 			if newer {
 				return // that run found the pending volume and restores it
 			}
-			e.putBack(dev, p.Volume)
+			e.putBack(dev, m.volume)
 		}
-		e.sp.SetVolume(ctx, dev, 0) // even if this fails it may have arrived: restored either way
 	}
 	for i := 0; i < 2 && ctx.Err() == nil; i++ {
 		if i > 0 && e.sleep(ctx, e.timing.Settle) != nil {
 			break
 		}
-		e.sp.PlayerOp(ctx, dev, "pause")
-		e.sp.PlayerOp(ctx, dev, "stop")
+		e.halt(ctx, dev)
 	}
 	return restore
 }

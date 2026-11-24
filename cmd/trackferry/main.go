@@ -253,6 +253,33 @@ func serve() error {
 		return err
 	}
 	engine := takeover.New(xm, st, log, takeover.DefaultTiming)
+	engine.Style = func(id string) string {
+		d, err := st.Device(ctx, id)
+		if err != nil {
+			return takeover.HushNormal
+		}
+		return takeover.HushStyle(d.Hush, d.Hardware, d.MiotDID)
+	}
+	engine.Deep = func(c context.Context, id string, on bool) error {
+		d, err := st.Device(ctx, id)
+		if err != nil || !xiaomi.CanHush(d.Hardware, d.MiotDID) {
+			return nil
+		}
+		return xm.Hush(c, d.Hardware, d.MiotDID, on)
+	}
+	go func() { // what the first request would otherwise wait for
+		defer logx.Recover(log, "音箱")
+		devs, _ := st.Devices(ctx)
+		for _, d := range devs {
+			if !d.InAccount || d.Mode != store.ModeTakeover {
+				continue
+			}
+			engine.Prime(ctx, d.DeviceID)
+			if engine.Style(d.DeviceID) != takeover.HushNormal {
+				xm.WarmHome(ctx)
+			}
+		}
+	}()
 	go engine.RecoverVolumes(ctx) // a crash mid-takeover must not leave a speaker muted
 	lib := library.New(cfg.MusicDir, st, log)
 	fn, err := feiniu.NewManager(filepath.Join(private, "feiniu.json"))
@@ -275,7 +302,12 @@ func serve() error {
 	go fn.Run(ctx)
 	go lib.Run(ctx, 6*time.Hour)
 	client := online.Client()
-	sources := online.New(log, client, &online.Kuwo{Client: client}, &online.Kugou{Client: client}, &online.Migu{Client: client})
+	netease := &online.Netease{Client: client, File: filepath.Join(private, "netease.json")}
+	if err := netease.Load(); err != nil {
+		log.Warn("网易云　登录记录读不出来，按没登录处理")
+	}
+	go netease.Run(ctx)
+	sources := online.New(log, client, &online.Kuwo{Client: client}, &online.Kugou{Client: client}, &online.Migu{Client: client}, netease)
 	router := &routing.Router{Library: lib, Online: sources, Log: log, Openable: streams.Openable}
 	router.LoadSettings(ctx, st)
 	kept, err := openCache(cfg.DataDir, cacheLimit(ctx, st), log)
@@ -323,7 +355,8 @@ func serve() error {
 		return err
 	}
 	router.Lists = fn
-	dispatcher.Next, dispatcher.Put = router.Next, router.Put
+	dispatcher.Next, dispatcher.Put, dispatcher.Random = router.Next, router.Put, lib.RandomIDs
+	router.ArtistQueue = func() bool { return takeover.LoadPrefs(ctx, st).Artist }
 	played := func(dev, title, artist string, track int64) {
 		dispatcher.Drop(dev) // a song sent by hand ends a list
 		dispatcher.Remember(dev, title, artist, track)
@@ -364,7 +397,7 @@ func serve() error {
 	srv := api.New(api.Options{
 		Config: cfg, Store: st, Token: token, SetupCodePath: setupCodePath,
 		Build: api.Build{Version: version, Commit: commit}, Boot: boot,
-		Xiaomi: xm, Observer: obs, Engine: engine, Stream: streams, Library: lib, Cache: kept, Router: router, Feiniu: fn, Live: hub, Home: atHome, Played: played, Web: webui.Handler(), Log: log, Update: checker, SetupLog: showCode,
+		Xiaomi: xm, Observer: obs, Engine: engine, Stream: streams, Library: lib, Cache: kept, Router: router, Feiniu: fn, Netease: netease, Live: hub, Home: atHome, Played: played, Dispatcher: dispatcher, Web: webui.Handler(), Log: log, Update: checker, SetupLog: showCode,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

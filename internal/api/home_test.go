@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,14 +22,21 @@ import (
 
 type quietSpeaker struct {
 	takeover.Speaker
+	mu     sync.Mutex
 	ops    []string
 	volume int
 	err    error
 }
 
 func (q *quietSpeaker) PlayerOp(_ context.Context, _, op string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	q.ops = append(q.ops, op)
 	return q.err
+}
+
+func (q *quietSpeaker) PlayStatus(context.Context, string) (xiaomi.PlayStatus, error) {
+	return xiaomi.PlayStatus{Volume: 25}, nil
 }
 
 func (q *quietSpeaker) SetVolume(_ context.Context, _ string, v int) error {

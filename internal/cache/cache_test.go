@@ -269,3 +269,16 @@ func TestUnusableMount(t *testing.T) {
 		t.Fatal("gave up the old place")
 	}
 }
+
+func TestMemberSongsAreNotKept(t *testing.T) {
+	c, err := Open(t.TempDir(), "", 10, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := song("1")
+	f.Candidate.Member = true
+	b := audio(200 << 10)
+	if err := c.Keep(context.Background(), f, "ask", from(b, int64(len(b)))); err != nil || c.Find("ask") != nil {
+		t.Fatal(err, "kept")
+	}
+}

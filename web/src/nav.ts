@@ -1,7 +1,7 @@
 import { flushSync } from 'react-dom';
 
 export type Page = 'welcome' | 'home' | 'flow' | 'say' | 'library' | 'speakers' | 'account';
-export interface Place { page: Page; kind?: 'album' | 'artist' | 'missing'; id?: string }
+export interface Place { page: Page; kind?: 'album' | 'artist' | 'playlist' | 'favorites' | 'missing'; id?: string }
 
 const pages: Page[] = ['welcome', 'home', 'flow', 'say', 'library', 'speakers', 'account'];
 
@@ -9,17 +9,17 @@ export function readPlace(): Place | null {
   const [p, kind, ...rest] = location.hash.replace(/^#\/?/, '').split('/');
   const page = p === 'commands' ? 'home' : (p as Page);
   if (!pages.includes(page)) return null;
-  if (page === 'library' && (kind === 'album' || kind === 'artist') && rest.length) {
+  if (page === 'library' && (kind === 'album' || kind === 'artist' || kind === 'playlist') && rest.length) {
     try { return { page, kind, id: decodeURIComponent(rest.join('/')) }; } catch { return { page }; }
   }
-  if (page === 'library' && kind === 'missing') return { page, kind };
+  if (page === 'library' && (kind === 'missing' || kind === 'favorites')) return { page, kind };
   if (page === 'flow' && /^r?\d+$/.test(kind ?? '')) return { page, id: kind };
   return { page };
 }
 
 export function href(p: Place) {
   if (p.page === 'flow' && p.id) return `#/flow/${p.id}`;
-  return `#/${p.page}${p.kind === 'missing' ? '/missing' : p.kind ? `/${p.kind}/${encodeURIComponent(p.id ?? '')}` : ''}`;
+  return `#/${p.page}${p.kind === 'missing' || p.kind === 'favorites' ? `/${p.kind}` : p.kind ? `/${p.kind}/${encodeURIComponent(p.id ?? '')}` : ''}`;
 }
 
 type VT = Document & { startViewTransition?: (f: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };

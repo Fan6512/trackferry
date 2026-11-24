@@ -76,13 +76,13 @@ func TestFavoriteOfTheSongOnTheSpeaker(t *testing.T) {
 func TestSaySilencesThenSpeaksThenPutsTheVolumeBack(t *testing.T) {
 	e, sp, st := setup(t)
 	ctx := context.Background()
-	e.devs["d1"] = &device{cancel: func() {}, gen: 1, heard: make(chan Heard, 8)}
+	e.devs["d1"] = &device{cancel: func(error) {}, gen: 1, heard: make(chan Heard, 8)}
 	err := e.Say(ctx, "d1", func() string { return "已收藏晴天" })
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(sp.calls, " ")
-	if got != "status volume pause stop pause stop volume speak@40:已收藏晴天" {
+	if !strings.HasPrefix(got, "status volume ") || !strings.HasSuffix(got, " volume speak@40:已收藏晴天") || strings.Count(got, "pause") != 2 || strings.Count(got, "stop") != 2 {
 		t.Fatal(got)
 	}
 	if _, ok, _ := st.PendingVolume(ctx, "d1"); ok || sp.volume != 40 {

@@ -141,10 +141,10 @@ const maxRefused = 5 * time.Minute
 
 // Run polls until ctx ends.
 func (o *Observer) Run(ctx context.Context) {
-	t := time.NewTicker(o.interval)
+	t := time.NewTicker(o.interval / 2)
 	defer t.Stop()
 	var pruned time.Time
-	for {
+	for n := 0; ; n++ {
 		if now := o.now(); now.Sub(pruned) > 24*time.Hour {
 			pruned = now
 			if n, err := o.st.Prune(ctx, now.AddDate(0, 0, -180)); err != nil {
@@ -153,7 +153,7 @@ func (o *Observer) Run(ctx context.Context) {
 				o.log.Info("记录　清理过期", "条数", n)
 			}
 		}
-		o.Tick(ctx)
+		o.tick(ctx, n%2 == 1)
 		select {
 		case <-ctx.Done():
 			o.wg.Wait()
@@ -164,7 +164,11 @@ func (o *Observer) Run(ctx context.Context) {
 }
 
 // Tick starts a read for every speaker that is due. Exposed for tests.
-func (o *Observer) Tick(ctx context.Context) {
+func (o *Observer) Tick(ctx context.Context) { o.tick(ctx, false) }
+
+// tick between passes over speakers that are only watched: those whose answer we have to
+// interrupt are read twice as often, unless reading them fails.
+func (o *Observer) tick(ctx context.Context, between bool) {
 	devs, err := o.st.Devices(ctx)
 	if err != nil {
 		o.log.Warn("听歌　读不到音箱列表", "原因", err)
@@ -204,7 +208,7 @@ func (o *Observer) Tick(ctx context.Context) {
 			w.status.State, w.baseline = StatePaused, false
 			continue
 		}
-		if w.inflight || now.Before(w.next) {
+		if w.inflight || now.Before(w.next) || between && (w.mode != store.ModeTakeover || w.failures > 0) {
 			continue
 		}
 		w.inflight = true
@@ -228,7 +232,10 @@ func (o *Observer) poll(ctx context.Context, id string, w *watch) {
 		o.mu.Unlock()
 	}()
 	o.mu.Lock()
-	hardware := w.hardware
+	hardware, every := w.hardware, o.interval
+	if w.mode == store.ModeTakeover && w.failures == 0 {
+		every /= 2
+	}
 	o.mu.Unlock()
 	started := o.now()
 	rctx, cancel := context.WithTimeout(ctx, pollTimeout)
@@ -242,7 +249,7 @@ func (o *Observer) poll(ctx context.Context, id string, w *watch) {
 	defer func() {
 		if o.watches[id] == w {
 			o.Live.Pulse(live.Pulse{DeviceID: id, Name: w.status.Name, State: w.status.State, OK: err == nil, MS: took,
-				Ignored: w.status.Ignored, Recorded: w.status.Recorded, Every: o.interval.Milliseconds()})
+				Ignored: w.status.Ignored, Recorded: w.status.Recorded, Every: every.Milliseconds()})
 		}
 	}()
 	if o.watches[id] != w {

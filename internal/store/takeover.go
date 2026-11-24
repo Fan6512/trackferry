@@ -234,7 +234,7 @@ func (s *Store) ClearPendingVolume(ctx context.Context, deviceID string) error {
 
 // Device returns one speaker.
 func (s *Store) Device(ctx context.Context, id string) (Device, error) {
-	d, err := scanDevice(s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	d, err := scanDevice(s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account, hush
 		FROM devices WHERE device_id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound

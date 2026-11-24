@@ -1,17 +1,17 @@
 // Package takeover interrupts Xiao AI on a speaker and plays TrackFerry's own audio
 // instead, as a closed loop rather than a single "stop then play":
 //
-//  1. read the player state (for the volume to come back to);
-//  2. mute, so the rest of Xiao AI's spoken answer is not heard;
-//  3. stop twice (pause + stop, then again after a short settle): Xiao AI's answer is
-//     speech followed by its own playlist, which starts after a single stop;
-//  4. push our stream while still muted;
-//  5. guard for a few seconds: whenever the speaker plays something that is not ours,
+//  1. mute, so the rest of Xiao AI's spoken answer is not heard, and stop. Both begin
+//     as soon as a request is heard, the mute even before it is decided who answers;
+//  2. stop again after a short settle: Xiao AI's answer is speech followed by its own
+//     playlist, which starts after a single stop;
+//  3. push our stream while still muted;
+//  4. guard for a few seconds: whenever the speaker plays something that is not ours,
 //     stop it and push ours again; unmute once the speaker fetched our stream and
 //     reports playing it;
-//  6. always put the volume back, even on failure, cancellation or a crash (the volume
+//  5. always put the volume back, even on failure, cancellation or a crash (the volume
 //     to restore is kept on disk until it has been restored);
-//  7. once our track has played through, stop the speaker: a pushed URL is a one-item
+//  6. once our track has played through, stop the speaker: a pushed URL is a one-item
 //     playlist that the speaker otherwise repeats forever.
 //
 // Every step is timed and stored with the run, so field tests show where time went.
@@ -67,6 +67,7 @@ type Request struct {
 	Trace      *live.Trace // tells the web UI; optional
 	// Follows: our own last song just ended, so there is nothing to silence first.
 	Follows bool
+	Answer  int // characters Xiao AI says
 	// Ended is called once the run is over; optional.
 	Ended func(End)
 }
@@ -92,11 +93,15 @@ var DefaultTiming = Timing{Settle: 600 * time.Millisecond, Guard: 8 * time.Secon
 	UnmuteAfter: 2500 * time.Millisecond, MaxReplays: 2, EndSlack: 1500 * time.Millisecond, MaxWatch: 3 * time.Hour,
 	Look: 2500 * time.Millisecond, LookClose: 900 * time.Millisecond, Speak: 235 * time.Millisecond, Pause: 1500 * time.Millisecond}
 
+// longestAnswer bounds the wait for Xiao AI to finish.
+const longestAnswer = 15 * time.Second
+
 // Step names stored with a run.
 const (
 	StepStatus    = "status"    // read player state and volume
 	StepMute      = "mute"      // volume to 0
 	StepStop1     = "stop1"     // first pause + stop
+	StepWait      = "wait"      // for Xiao AI to finish what she says
 	StepStop2     = "stop2"     // second pause + stop after settle
 	StepPlay      = "play"      // pushed our stream
 	StepFetched   = "fetched"   // speaker requested our stream
@@ -122,24 +127,38 @@ type Engine struct {
 	timing Timing
 	now    func() time.Time
 
-	mu   sync.Mutex
-	devs map[string]*device
+	// Deep mutes and pauses a speaker through Mi Home, or lifts that mute; optional.
+	Deep func(ctx context.Context, deviceID string, on bool) error
+	// Style is how a speaker is kept quiet; optional.
+	Style func(deviceID string) string
+
+	mu      sync.Mutex
+	devs    map[string]*device
+	volumes map[string]int // as last seen, never 0
 }
 
 type device struct {
 	run    sync.Mutex // one run at a time per speaker
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 	gen    int
 	hold   int // runs and answers that own the speaker's volume right now
 	// released is closed when the user spoke a command that Xiao AI keeps: the guard must
 	// stop fighting whatever she plays next.
 	released chan struct{}
 	heard    chan Heard
+	watching bool // the song is past its guard; what is heard takes effect
+	cut      bool // paused by a stop, so "play" alone does not bring it back
+
+	vol     sync.Mutex // one mute at a time
+	quiets  int        // requests being decided on
+	quieted int        // the volume they turned down, 0: none
+	deep    sync.Mutex
+	deepOn  bool // muted through Mi Home
 }
 
 // New returns an Engine.
 func New(sp Speaker, st *store.Store, log *slog.Logger, timing Timing) *Engine {
-	return &Engine{sp: prompt{sp}, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}}
+	return &Engine{sp: prompt{sp}, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}, volumes: map[string]int{}}
 }
 
 // Start begins a takeover in the background, cancelling any run in progress on the same
@@ -157,9 +176,9 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 		e.devs[req.DeviceID] = d
 	}
 	if d.cancel != nil {
-		d.cancel()
+		d.cancel(nil)
 	}
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	runCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	d.gen++
 	d.hold++ // a newer run owns the volume from here on, though the older one is still leaving
 	gen := d.gen
@@ -168,6 +187,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 	d.released = released
 	heard := make(chan Heard, 8)
 	d.heard = heard
+	d.watching, d.cut = false, false
 	e.mu.Unlock()
 
 	own := run // the goroutine's copy; the caller gets the snapshot below
@@ -179,7 +199,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 				req.Ended(how)
 			}()
 		}
-		defer cancel()
+		defer cancel(nil)
 		d.run.Lock()
 		defer d.run.Unlock()
 		letGo := e.letGo(d)
@@ -187,7 +207,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 			letGo()
 			e.mu.Lock()
 			if d.gen == gen {
-				d.cancel, d.released, d.heard = nil, nil, nil
+				d.cancel, d.released, d.heard, d.watching = nil, nil, nil, false
 			}
 			e.mu.Unlock()
 		}()
@@ -221,6 +241,7 @@ type Heard struct {
 	Quiet   bool   // not worth a step of its own
 	Button  bool   // pressed, not said
 	Woke    bool   // the speaker was woken and listens
+	Cut     bool   // the speaker had to be stopped to be paused
 	At      time.Time
 }
 
@@ -339,6 +360,9 @@ func (r *runner) tell() {
 func (r *runner) status() (xiaomi.PlayStatus, error) {
 	p, err := r.e.sp.PlayStatus(r.ctx, r.req.DeviceID)
 	if err == nil {
+		if !r.e.held(r.req.DeviceID) {
+			r.e.know(r.req.DeviceID, p.Volume)
+		}
 		r.req.Trace.Player(live.Player{Status: p.Status, Position: p.Position, Duration: p.Duration, Volume: p.Volume,
 			Ours: p.Playing() && (p.AudioID == "" || p.AudioID == xiaomi.OurAudioID), Held: r.held, Elapsed: r.elapsed.Milliseconds(), Phase: r.phase})
 	}
@@ -370,10 +394,9 @@ func describe(err error) string {
 	return err.Error()
 }
 
-// stop is pause then stop; some models ignore a lone stop.
+// stop silences the player.
 func (r *runner) stop(name string) error {
-	r.e.sp.PlayerOp(r.ctx, r.req.DeviceID, "pause")
-	err := r.e.sp.PlayerOp(r.ctx, r.req.DeviceID, "stop")
+	err := r.e.halt(r.ctx, r.req.DeviceID)
 	r.step(name, err == nil, describe(err))
 	return err
 }
@@ -407,22 +430,10 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	dev := req.DeviceID
 	bg := context.WithoutCancel(ctx)
 
-	// 1. Volume to come back to. A pending entry means an earlier run muted the speaker
-	// and has not restored it yet: its value is the user's real volume.
-	volume, inherited := -1, false
-	if v, ok, err := e.st.PendingVolume(bg, dev); err == nil && ok {
-		volume, inherited = v, true
-		r.step(StepStatus, true, fmt.Sprintf("沿用待恢复音量 %d", v))
-	} else if p, err := r.status(); err == nil {
-		volume = p.Volume
-		r.step(StepStatus, true, fmt.Sprintf("状态 %d，音量 %d", p.Status, p.Volume))
-	} else {
-		r.step(StepStatus, false, describe(err)+"，不静音")
-	}
-
-	// 2. Mute. The restore is deferred before anything else can fail.
-	muted := false
-	restored := false
+	// 1. Mute, remembering the volume to come back to, and stop: all at once, because every
+	// call may take a speaker a second. The restore is deferred before anything can fail.
+	remute := false
+	volume, muted, restored := -1, false, false
 	restore := func() {
 		if !muted || restored {
 			return
@@ -436,17 +447,21 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 		r.step(StepRestore, err == nil, fmt.Sprintf("音量 %d %s", v, describe(err)))
 	}
 	defer restore()
-	if volume > 0 && !req.Follows {
-		if err := e.st.SetPendingVolume(bg, dev, volume, e.now()); err != nil {
-			r.step(StepMute, false, "记不下原音量，不静音")
-		} else {
-			err := e.sp.SetVolume(ctx, dev, 0)
-			// Only a plain refusal means nothing changed. A call that got lost may have arrived.
-			if muted = inherited || err == nil || !refused(err); !muted {
-				e.st.ClearPendingVolume(bg, dev)
-			}
-			r.step(StepMute, err == nil, describe(err))
+	stop1 := make(chan error, 1)
+	if req.Follows {
+		// A mute that is still on is an earlier run's, left for us to lift.
+		if v, ok, err := e.st.PendingVolume(bg, dev); err == nil && ok {
+			volume, muted = v, true
 		}
+	} else {
+		go func() { stop1 <- e.halt(ctx, dev) }()
+		m := e.mute(ctx, dev)
+		volume, muted = m.volume, m.muted
+		r.step(StepStatus, m.statusOK, m.status)
+		if m.muted || m.err != nil || m.note != "" {
+			r.step(StepMute, m.err == nil && m.note == "", m.note+describe(m.err))
+		}
+		remute = m.muted && m.err != nil
 	}
 	if !muted {
 		letGo()
@@ -456,24 +471,48 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 		if ctx.Err() == nil {
 			return false
 		}
+		if context.Cause(ctx) == errStopped {
+			r.step(StepStopped, true, "按了停止")
+			finish(store.OutcomeCancelled, "按了停止")
+			return true
+		}
 		r.step(StepCancelled, true, "同一台音箱有了更新的指令")
 		finish(store.OutcomeCancelled, "被更新的指令取代")
 		return true
 	}
 
-	// 3. Stop twice.
+	// 2. Stop again: Xiao AI's playlist starts after a single stop.
 	if !req.Follows {
-		r.stop(StepStop1)
+		err := <-stop1
+		r.step(StepStop1, err == nil, describe(err))
 		if e.sleep(ctx, e.timing.Settle) != nil || cancelled() {
 			return
 		}
+		if remute {
+			e.sp.SetVolume(ctx, dev, 0)
+		}
 		r.stop(StepStop2)
+		if muted && e.style(dev) == HushWait {
+			left := max(0, min(longestAnswer, e.timing.Pause+time.Duration(req.Answer)*e.timing.Speak-time.Duration(e.now().UnixMilli()-req.UpstreamMS)*time.Millisecond))
+			if req.Answer > 0 && left > 0 {
+				r.step(StepWait, true, fmt.Sprintf("等小爱说完，约 %.1f 秒", left.Seconds()))
+				if e.sleep(ctx, left) != nil || cancelled() {
+					return
+				}
+				r.stop(StepStop2)
+			}
+		}
 	}
 	if cancelled() {
 		return
 	}
 
-	// 4. Push our stream.
+	e.deepened(dev)
+	if cancelled() {
+		return
+	}
+
+	// 3. Push our stream.
 	push := func(name string) error {
 		err := e.sp.PlayURL(ctx, dev, req.Hardware, req.Track.URL)
 		for i := 0; err != nil && ctx.Err() == nil && i < 2; i++ {
@@ -494,7 +533,7 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 		return EndUnplayed
 	}
 
-	// 5. Guard.
+	// 4. Guard.
 	musicAPI := xiaomi.UsesMusicAPI(req.Hardware)
 	deadline := e.now().Add(e.timing.Guard)
 	var fetchedAt time.Time
@@ -580,6 +619,11 @@ guard:
 		}
 		return EndUnplayed
 	}
+	e.mu.Lock()
+	if d := e.devs[dev]; d != nil && heard != nil && d.heard == heard {
+		d.watching = true
+	}
+	e.mu.Unlock()
 	how = r.watch(fetchedAt, heard)
 	req.Trace.Done("")
 	return how
@@ -604,6 +648,10 @@ func (e *Engine) putBack(dev string, volume int) (int, error) {
 		c, cancel := context.WithTimeout(bg, 6*time.Second)
 		err = e.sp.SetVolume(c, dev, v)
 		cancel()
+		if err == nil {
+			err = e.undeepen(dev)
+		}
+		e.know(dev, v)
 		if volume = v; err != nil {
 			time.Sleep(300 * time.Millisecond)
 			continue
@@ -680,6 +728,12 @@ func (e *Engine) recoverVolume(ctx context.Context, dev string, v int) {
 	p, err := e.sp.PlayStatus(c, dev)
 	if err != nil || e.held(dev) {
 		return
+	}
+	if e.undeepen(dev) != nil {
+		return
+	}
+	if e.style(dev) != HushNormal && e.Unhush(ctx, dev) != nil {
+		e.log.Warn("接管　没能确认米家静音已解除")
 	}
 	if p.Volume > 0 { // somebody turned it up already, or the mute never arrived
 		e.st.ClearPendingVolume(ctx, dev)

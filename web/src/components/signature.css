@@ -1,0 +1,26 @@
+.sig { position: relative; max-width: 100%; display: inline-grid; justify-items: center; gap: 4px; text-decoration: none; color: var(--ink); }
+.sig-role { padding-left: .5em; font-size: 12px; letter-spacing: .5em; color: var(--ink3); transition: color .4s, letter-spacing .6s var(--out); }
+.sig-sea { position: relative; display: block; padding: 0 34px; }
+.sig-name { display: flex; justify-content: center; font-size: 38px; line-height: 1.16; font-weight: 340; letter-spacing: .1em; }
+.sig-name i { font-style: normal; animation: sig-bob 4.2s ease-in-out calc(var(--i) * -.42s) infinite; transition: color .5s calc(var(--i) * 60ms); }
+.sig-line { position: relative; z-index: 1; display: block; width: 280px; max-width: 100%; height: 10px; margin: -9px auto 0; overflow: hidden; -webkit-mask: linear-gradient(90deg, transparent, #000 22% 78%, transparent); mask: linear-gradient(90deg, transparent, #000 22% 78%, transparent); }
+.sig-line svg { position: absolute; left: 0; top: 0; width: 480px; height: 10px; animation: sig-flow 7s linear infinite; } .sig-line path { fill: none; stroke: var(--stone); stroke-width: 1.3; }
+.sig-glass { display: block; height: 34px; margin-top: -7px; overflow: hidden; opacity: .42; filter: url(#sig-ripple); -webkit-mask: linear-gradient(#000, transparent 92%); mask: linear-gradient(#000, transparent 92%); }
+.sig-glass .sig-name { transform: scaleY(-1); color: #9fd6dc; }
+.sig-fish { position: absolute; z-index: 2; left: 0; top: 20px; opacity: 0; transform: translate(-30px, 18px) rotate(-24deg); }
+.sig:hover .sig-role, .sig:focus-visible .sig-role { color: var(--stone); letter-spacing: .7em; }
+.sig:hover .sig-sea > .sig-name i, .sig:focus-visible .sig-sea > .sig-name i { color: var(--stone); }
+.sig:hover .sig-fish, .sig:focus-visible .sig-fish { animation: sig-leap 1.7s cubic-bezier(.4, 0, .5, 1) 1; }
+@keyframes sig-bob { 50% { transform: translateY(-3.5px) rotate(-1.5deg); } }
+@keyframes sig-flow { to { transform: translateX(-60px); } }
+@keyframes sig-leap {
+  0% { opacity: 0; transform: translate(-24px, 26px) rotate(-40deg); } 12% { opacity: 1; }
+  45% { transform: translate(90px, -44px) rotate(0); } 88% { opacity: 1; }
+  100% { opacity: 0; transform: translate(220px, 28px) rotate(42deg); }
+}
+.colophon { position: relative; display: grid; justify-items: center; margin-top: -60px; padding: 0 var(--gut) 44px; }
+.at-home .colophon, .at-say .colophon { margin-top: 0; padding-top: 40px; background: rgb(9 13 15 / .9); }
+.at-flow .colophon { margin-top: 0; padding-top: 40px; }
+.st-sig { display: flex; justify-content: center; padding: 34px 20px 26px; }
+@media (max-width: 760px) { .colophon { padding-bottom: calc(env(safe-area-inset-bottom) + 100px); margin-top: -70px; } .sig-name { font-size: 32px; } .sig-sea { padding: 0; } .st-sig { padding-inline: 0; } }
+@media (prefers-reduced-motion: reduce) { .sig *, .sig:hover .sig-fish { animation: none !important; } }

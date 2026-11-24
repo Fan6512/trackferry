@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, type Device } from '../api';
+import { ApiError, type Device } from '../api';
 import { deviceTitle } from '../copy';
 
-/** Plays one song of the library on a speaker that is connected. */
-export function Play({ trackID, title, devices, label = false }: { trackID: number; title: string; devices: Device[]; label?: boolean }) {
+/** Plays something on a speaker that is connected. */
+export function Play({ send, title, devices, label }: { send: (device: string) => Promise<unknown>; title: string; devices: Device[]; label?: string }) {
   const targets = devices.filter((d) => d.in_account && d.mode !== 'off');
   const [open, setOpen] = useState(false);
   const [down, setDown] = useState(false);
@@ -26,7 +26,7 @@ export function Play({ trackID, title, devices, label = false }: { trackID: numb
     setOpen(false);
     setState({ tone: 'busy', text: `正在送到${deviceTitle(d)}` });
     try {
-      await api.playTrack(d.device_id, trackID);
+      await send(d.device_id);
       setState({ tone: 'ok', text: `已送往${deviceTitle(d)}` });
     } catch (e) {
       setState({ tone: 'bad', text: (e as ApiError).message });
@@ -35,10 +35,10 @@ export function Play({ trackID, title, devices, label = false }: { trackID: numb
 
   return (
     <span className={`play ${label ? 'play-label' : ''}`} ref={box}>
-      <button type="button" className={label ? 'btn btn-primary' : 'play-btn'} disabled={state?.tone === 'busy'} aria-label={`播放${title}`} aria-expanded={open}
+      <button type="button" className={label ? 'btn btn-small' : 'play-btn'} disabled={state?.tone === 'busy'} aria-label={`播放${title}`} aria-expanded={open}
         onClick={(e) => { setDown(e.currentTarget.getBoundingClientRect().top < innerHeight / 2); setOpen(!open); }}>
         <svg viewBox="0 0 12 14" width="11" height="13" aria-hidden="true"><path d="M1 1l10 6-10 6z" fill="currentColor" /></svg>
-        {label && '在音箱上播放'}
+        {label}
       </button>
       {open && (
         <span className={`menu ${down ? 'menu-down' : ''}`} role="menu">

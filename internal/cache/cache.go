@@ -377,7 +377,7 @@ func span(rng string, size int64) (from, to int64, ok bool) {
 // Keep stores a song that was played, and that it answered asked.
 func (c *Cache) Keep(ctx context.Context, f *online.Found, asked string, remote Opener) error {
 	s := online.Save(f)
-	if s.ID == "" {
+	if s.ID == "" || f.Candidate.Member {
 		return nil
 	}
 	key := keyOf(s)

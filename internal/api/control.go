@@ -51,6 +51,9 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 			s.Engine.Woke(d.DeviceID)
 		}
 	default:
+		if req.Action == takeover.ControlStop && s.Dispatcher != nil {
+			s.Dispatcher.Halt(d.DeviceID)
+		}
 		err = s.Engine.Press(r.Context(), d.DeviceID, req.Action)
 	}
 	if err != nil {

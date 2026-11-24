@@ -65,3 +65,8 @@ export function sounding(flows: Flow[], runID?: number): Sounding | null {
 }
 export const position = (s: Sounding) => s.at + (s.phase === 'playing' ? Math.max(0, serverNow() - s.since) : 0);
 export const phaseText = { playing: '正在播放', paused: '停着', talking: '小爱在说话', resuming: '正在接着放' } as const;
+
+/** The song a speaker has on now. */
+export function onSpeaker(flows: Flow[], id: string) {
+  return flows.filter((f) => f.device_id === id && !f.done && f.player?.phase).at(-1) ?? null;
+}

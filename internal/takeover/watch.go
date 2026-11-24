@@ -1,6 +1,7 @@
 package takeover
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -15,7 +16,7 @@ const (
 )
 
 // maxPause is how long a paused song is waited for.
-const maxPause = 30 * time.Minute
+const maxPause = 15 * time.Minute
 
 // startLag is from the speaker's first request to the first sound.
 const startLag = 500 * time.Millisecond
@@ -59,7 +60,9 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 		foreign     int
 		silently    bool // waiting for a button to take effect, not for someone talking
 		soon        bool // look at the speaker at once
+		deaf        bool // paused by a button; a speaker that still claims to play is not believed
 		byUser      bool // the listener wants quiet
+		cut         bool // and only a new push brings it back
 		yield       bool // Xiao AI was asked to play something
 		pausedAt    time.Time
 		resumes     int
@@ -202,6 +205,10 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 		select {
 		case <-r.ctx.Done():
 			r.phase = ""
+			if context.Cause(r.ctx) == errStopped {
+				r.step(StepStopped, true, "按了停止")
+				return
+			}
 			r.step(StepCancelled, true, "")
 			return
 		case <-limit.C:
@@ -224,10 +231,35 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 				if !byUser { // if nothing is said to it, the song goes on
 					talkedUntil = e.now().Add(15 * time.Second)
 				}
-			case h.Control == "pause", h.Control == "stop", h.Stop:
+			case h.Control == "stop":
+				over(StepStopped, "说了停止")
+				return
+			case h.Control == "pause", h.Stop:
 				byUser, talkedUntil = true, time.Time{}
+				cut = cut || h.Cut
+				if h.Button && !h.Cut {
+					deaf = true
+					if sounding {
+						pause(e.now())
+						r.phase, r.elapsed, r.held = phasePaused, base, true
+						r.step(StepPaused, true, "按了暂停")
+					}
+				}
 			case h.Control == "resume":
-				byUser = false
+				byUser, deaf = false, false
+				if cut {
+					cut = false
+					e.mu.Lock()
+					if d := e.devs[r.req.DeviceID]; d != nil {
+						d.cut = false
+					}
+					e.mu.Unlock()
+					if !again() && r.ctx.Err() == nil {
+						over(StepStopped, "没能接着放")
+						return
+					}
+					continue
+				}
 				talkedUntil = e.now().Add(tm.Pause)
 			case h.Control != "", h.Audio:
 				yield, talkedUntil = true, time.Time{}
@@ -263,6 +295,12 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 		lost := track.Lost != nil && track.Lost()
 		// Xiao AI's voice can read as "playing" too; a speaker that hung up is not playing ours.
 		ours := p.Playing() && !r.foreign(p) && !(lost && (talking || !sounding))
+		if deaf {
+			ours = false
+			if !p.Playing() {
+				deaf = false // it did pause; from here on its word counts again
+			}
+		}
 		switch {
 		case ours:
 			silent, foreign = 0, 0
@@ -280,7 +318,7 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 				return
 			}
 		default:
-			if p.Playing() {
+			if p.Playing() && (!deaf || r.foreign(p)) {
 				foreign++
 			} else {
 				foreign = 0

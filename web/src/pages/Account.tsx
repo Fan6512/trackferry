@@ -5,6 +5,9 @@ import { FeiniuCard } from '../components/Feiniu';
 import { HomeAssistant } from '../components/HomeAssistant';
 import { LockIcon, Setting, type Light } from '../components/Setting';
 import { SourceIcon } from '../components/SourceIcon';
+import { useInstall } from '../pwa';
+import { Signature } from '../components/Signature';
+import { Playing } from '../components/Playing';
 import { Sources } from '../components/Sources';
 import { useBackdrop } from '../stage/Stage';
 import { LinkAccount } from '../components/LinkAccount';
@@ -13,7 +16,7 @@ import fish from '../assets/brand/fish-mark.webp';
 import word from '../assets/brand/wordmark.svg';
 import './settings.css';
 
-const parts = [['feiniu', '飞牛音乐'], ['xiaomi', '小米账号'], ['sources', '线上音源'], ['home', 'Home Assistant'], ['password', '管理密码'], ['about', '关于']] as const;
+const parts = [['feiniu', '飞牛音乐'], ['xiaomi', '小米账号'], ['sources', '线上音源'], ['playing', '连续播放'], ['home', 'Home Assistant'], ['password', '管理密码'], ['about', '关于']] as const;
 type Part = (typeof parts)[number][0];
 
 export function Account({ account, build, startScanning, onChanged, onLogout }: {
@@ -112,6 +115,7 @@ export function Account({ account, build, startScanning, onChanged, onLogout }: 
       </Setting>
 
       <Sources onLight={sourceLight} />
+      <Playing />
       <HomeAssistant onLight={homeLight} />
       <PasswordCard onLogout={onLogout} />
       <About build={build} onLight={aboutLight} />
@@ -162,6 +166,7 @@ function PasswordCard({ onLogout }: { onLogout: () => void }) {
 }
 
 function About({ build, onLight }: { build: { version: string; commit: string }; onLight: (l: Light | null) => void }) {
+  const install = useInstall();
   const [up, setUp] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +187,7 @@ function About({ build, onLight }: { build: { version: string; commit: string };
           <small className="num">版本 {build.version}{build.commit && build.commit !== 'unknown' && `（${build.commit}）`}{up && !up.newer && up.checked_ms ? up.error ? `，${up.error}` : '，已是最新' : ''}</small>
           {up?.failed && !up.newer && <small className="field-error">{up.failed} 没能启动，已退回</small>}
         </div>
+        {install && <button className="btn" onClick={install}>装到桌面</button>}
         <button className="btn" onClick={check} disabled={busy}>{busy ? <><span className="spinner spinner-tiny" />正在检查</> : '检查更新'}</button>
       </div>
       {error && <p className="field-error st-body">{error}</p>}
@@ -194,6 +200,7 @@ function About({ build, onLight }: { build: { version: string; commit: string };
           <div><p>{up.installable && '也可以用命令更新：'}在 compose.yaml 所在目录执行下面的命令，数据不受影响。镜像写了固定版本号的，先改成 latest 或 <span className="num">{up.latest}</span>：</p><pre>docker compose pull &amp;&amp; docker compose up -d</pre></div>
         </div>
       )}
+      <div className="st-sig"><Signature /></div>
     </section>
   );
 }

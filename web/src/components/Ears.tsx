@@ -1,14 +1,9 @@
 import type { Device } from '../api';
 import { deviceTitle } from '../copy';
 import { connected } from '../ear';
-import { phaseText, useLive, type Flow } from '../live';
+import { onSpeaker, phaseText, useLive } from '../live';
 import { Cover } from './Cover';
 import { watchText } from './Speaker';
-
-/** The song a speaker has on now. */
-export function onSpeaker(flows: Flow[], id: string) {
-  return flows.filter((f) => f.device_id === id && !f.done && f.player?.phase).at(-1) ?? null;
-}
 
 function Body() {
   return <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="5" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M9.4 6.5h5.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><circle cx="12" cy="14.5" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg>;

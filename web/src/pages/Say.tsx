@@ -41,10 +41,10 @@ function ways(songs: Song[]): Way[] {
   return [
     { key: 'full', name: '歌手和歌名', parts: [{ text: '播放', role: '口令' }, { text: a.artist, role: '歌手' }, { text: '的' }, { text: a.title, role: '歌名' }], note: '最准的说法，同名歌也不会放错', pic: a },
     { key: 'title', name: '只说歌名', parts: [{ text: '我想听', role: '口令' }, { text: b.title, role: '歌名' }], note: '好几位歌手都唱过时，先放公认的原唱；想听另一版就带上歌手', pic: b },
-    { key: 'artist', name: '听一位歌手', parts: [{ text: '播放', role: '口令' }, { text: c.artist, role: '歌手' }, { text: '的歌' }], note: '从曲库里挑一首', pic: c },
-    { key: 'any', name: '随便听听', parts: [{ text: '随便放', role: '口令' }, { text: '一首歌' }], note: '从曲库里随机挑一首' },
+    { key: 'artist', name: '听一位歌手', parts: [{ text: '播放', role: '口令' }, { text: c.artist, role: '歌手' }, { text: '的歌' }], note: '曲库里这位歌手的歌，随机一首接一首。想只放一首，在“设置 → 连续播放”里关掉', pic: c },
+    { key: 'any', name: '随便听听', parts: [{ text: '随便放', role: '口令' }, { text: '一首歌' }], note: '从曲库里随机挑一首。想一直放下去，在“设置 → 连续播放”里打开随机接着放' },
     { key: 'list', name: '连着听', parts: [{ text: '播放', role: '口令' }, { text: '我的收藏' }], note: '随机连播飞牛音乐的收藏；说“播放某某歌单”就播那个歌单' },
-    { key: 'control', name: '播放控制', parts: [{ text: '下一首', role: '口令' }], note: '暂停、继续、停止、切歌由小爱自己做；连播时的上一首、下一首由我们换' },
+    { key: 'control', name: '播放控制', parts: [{ text: '下一首', role: '口令' }], note: '暂停、继续由小爱自己做；连播时的上一首、下一首由我们换；说“停止”，连播就结束' },
   ];
 }
 
@@ -53,7 +53,7 @@ const controlName: Record<string, string> = { pause: '暂停', resume: '继续',
 function verdict(r: Reading): { yes: boolean; text: string } {
   switch (r.why) {
     case 'song': return { yes: true, text: r.artist ? `点歌：${r.artist}的《${r.title}》` : `点歌：《${r.title}》` };
-    case 'artist': return { yes: true, text: `点歌：${r.artist}的任意一首` };
+    case 'artist': return { yes: true, text: `点歌：${r.artist}的歌，随机一首接一首` };
     case 'random': return { yes: true, text: '点歌：随机一首' };
     case 'version': return { yes: true, text: r.artist ? `接着上一首：换成${r.artist}唱的${r.verb ? `；没点过歌就放${r.artist}的任意一首` : ''}` : '接着上一首：换一位歌手唱的' };
     case 'list': return { yes: true, text: r.control === 'favorites' ? '随机连播飞牛音乐的收藏' : r.title ? `随机连播飞牛音乐的歌单“${r.title}”` : '随机连播飞牛音乐的歌单，有好几个时要说名字' };
@@ -128,7 +128,7 @@ const cuts: Cut[] = [
   { key: 'fav', say: '收藏这首歌', who: '报一声结果', after: 'same', then: '压住小爱的回答，报完结果歌接着放。线上的歌不在曲库里，收藏不了' },
   { key: 'ver', say: '换个版本', who: '找另一位歌手', after: 'next', then: '同一首歌，换人唱。也可以说“放某某的”' },
   { key: 'song', say: '再点一首', who: '去找新歌', after: 'next', then: '换成新的这首' },
-  { key: 'stop', say: '停止', who: '小爱停下', after: 'stop', then: '安静下来。说“暂停”以后，用“继续播放”回来' },
+  { key: 'stop', say: '停止', who: '小爱停下', after: 'stop', then: '安静下来，连播也结束。只想停一会儿就说“暂停”，用“继续播放”回来' },
   { key: 'news', say: '播放新闻', who: '让给小爱', after: 'out', then: '音箱归小爱' },
 ];
 
@@ -188,9 +188,27 @@ function Where() {
       <h2>去哪里找</h2>
       <ol>
         <li><div className="where-icons"><SourceIcon name="library" /></div><b>你的曲库</b><p>先放你收藏的，再看原唱</p></li>
-        <li><div className="where-icons"><SourceIcon name="kuwo" /><SourceIcon name="kugou" /><SourceIcon name="migu" /></div><b>线上</b><p>曲库没有才问，只放免费完整版</p></li>
+        <li><div className="where-icons"><SourceIcon name="kuwo" /><SourceIcon name="kugou" /><SourceIcon name="migu" /><SourceIcon name="netease" /></div><b>线上</b><p>曲库没有才问，只放免费完整版；登录网易云后，你账号能完整听的也放</p></li>
         <li><div className="where-icons"><SourceIcon name="xiaomi" /></div><b>小爱</b><p>都没找到，交给它</p></li>
       </ol>
+    </section>
+  );
+}
+
+/** What is started from a page, not by voice. */
+function Taps({ navigate }: { navigate: (p: Place) => void }) {
+  const list: { name: string; how: string; go: Place; to: string }[] = [
+    { name: '把收藏、歌单送到音箱', how: '曲库页点收藏或歌单旁的播放键，选一台音箱。专辑和歌手页也有', go: { page: 'library' }, to: '去曲库' },
+    { name: '点名字难念的歌', how: '搜索框旁勾上“在线源”，找到后点播放键。送过的照常缓存', go: { page: 'library' }, to: '去搜索' },
+    { name: '一首放完接着放', how: '打开“点完一首接着随机放”，随后从飞牛曲库随机接歌', go: { page: 'account' }, to: '去设置' },
+    { name: '到点就停', how: '“最长放多久”管所有连播，默认 3 小时，也可以不限', go: { page: 'account' }, to: '去设置' },
+    { name: '压住小爱的回答', how: '接管的音箱可选普通、加强、等小爱说完。还听得到就往后换一档', go: { page: 'speakers' }, to: '去音箱' },
+    { name: '暂停、停止、调音量', how: '“此刻”选中音箱就能按，音箱页也有', go: { page: 'home' }, to: '去此刻' },
+  ];
+  return (
+    <section className="taps">
+      <h2>不用说，点一下</h2>
+      <ul>{list.map((x) => <li key={x.name}><button type="button" onClick={() => navigate(x.go)}><b>{x.name}</b><span>{x.how}</span><em>{x.to}</em></button></li>)}</ul>
     </section>
   );
 }
@@ -333,6 +351,7 @@ export function Say({ navigate }: { navigate: (p: Place) => void }) {
       <section className="log say-more">
         {guide && <><Talk guide={guide} /><Over songs={songs ?? []} /><Openers guide={guide} song={songs?.[0] ?? plain} /></>}
         <Where />
+        <Taps navigate={navigate} />
         {guide && <><Remote guide={guide} /><Kept guide={guide} /></>}
         {songs && songs.length > 0 && (
           <div className="say-songs">

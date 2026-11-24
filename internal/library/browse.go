@@ -240,3 +240,48 @@ func (l *Library) ArtistTracks(name string, limit int) []store.TrackRow {
 	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) < score(out[j]) })
 	return out[:min(limit, len(out))]
 }
+
+// RandomIDs draws songs to come after one that ended: those of 飞牛音乐 if there are any.
+func (l *Library) RandomIDs(n int) []int64 {
+	x := l.index()
+	var remote, all []int
+	for i, t := range x.rows {
+		all = append(all, i)
+		if t.GUID != "" {
+			remote = append(remote, i)
+		}
+	}
+	if len(remote) > 0 {
+		all = remote
+	}
+	out := []int64{}
+	for _, i := range x.ordinary(all) {
+		out = append(out, x.rows[i].ID)
+	}
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	return out[:min(n, len(out))]
+}
+
+// ArtistIDs are the songs of an artist that are worth playing one after another.
+func (l *Library) ArtistIDs(name string) []int64 {
+	x := l.index()
+	out := []int64{}
+	for _, i := range x.ordinary(x.byArtist[names.Norm(strings.TrimSpace(name))]) {
+		out = append(out, x.rows[i].ID)
+	}
+	return out
+}
+
+// Favorites is a page of the favourites, the newest first, and how many there are.
+func (l *Library) Favorites(from, limit int) ([]store.TrackRow, int) {
+	all := []store.TrackRow{}
+	for _, t := range l.index().rows {
+		if t.Favorite {
+			all = append(all, t)
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].ID > all[j].ID })
+	n := len(all)
+	from = max(0, min(from, n))
+	return all[from:min(n, from+limit)], n
+}

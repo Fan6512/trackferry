@@ -9,8 +9,8 @@ import { Notice } from '../components/Notice';
 import { Play } from '../components/Play';
 import { SourceIcon } from '../components/SourceIcon';
 import { connected, useEar } from '../ear';
-import { phaseText, sounding, useLive, type Flow } from '../live';
-import { watchText } from '../components/Speaker';
+import { onSpeaker, phaseText, sounding, useLive, type Flow } from '../live';
+import { Buttons, watchText } from '../components/Speaker';
 import { clock, day, deviceTitle, length, singer } from '../copy';
 import type { Place } from '../nav';
 import { line, ms, outcome, pushed, stopLabel, tally } from '../route';
@@ -21,7 +21,7 @@ const PAGE = 50;
 const ROWS = 12;
 /** Who a row belongs to, for the log's filter. */
 const kindOf = (c: Scene) => c.command?.intent_kind === 'favorite' ? 'favorite' : !c.route || c.route.decision === 'native' ? 'xiaomi' : c.route.source ?? 'library';
-const kinds = ['library', 'kuwo', 'kugou', 'migu', 'xiaomi', 'favorite'] as const;
+const kinds = ['library', 'kuwo', 'kugou', 'migu', 'netease', 'xiaomi', 'favorite'] as const;
 const kindLabel = (k: string) => k === 'favorite' ? '收藏' : k === 'xiaomi' ? '小爱' : stopLabel[k as keyof typeof stopLabel];
 /** What is on the water: a recorded request, or one just tried. */
 interface Scene { key: string; said: string; asked?: string; route: Route | null; command?: Command; run?: TakeoverRun; device?: string; deviceId?: string; at?: number }
@@ -59,14 +59,15 @@ function Crossing({ scene, trying }: { scene: Scene | null; trying: boolean }) {
   useEffect(() => {
     if (!water) return;
     const xs = () => refs.current.slice(0, end + 1).map((el) => { const b = el!.getBoundingClientRect(); return b.left + b.width / 2; });
-    if (end < 0 || !key) { water.ferry([]); return; }
+    if (end < 0 || !key || !refs.current[0]?.offsetParent) { // not shown on a phone
+      water.ferry([]); return; }
     water.ferry(xs());
     const again = () => water.ferry(xs(), true);
     addEventListener('resize', again);
     return () => { removeEventListener('resize', again); water.ferry([]); };
   }, [water, key, end]);
   return (
-    <ol style={{ '--stops': st.length } as React.CSSProperties} className={`crossing ${st.length > 6 ? 'many ' : ''}${trying ? 'trying' : ''}`} aria-label={end >= 0 ? `由${st[end].label}播放` : undefined}>
+    <ol style={{ '--stops': st.length } as React.CSSProperties} className={`crossing ${st.length > 5 ? 'many ' : ''}${trying ? 'trying' : ''}`} aria-label={end >= 0 ? `由${st[end].label}播放` : undefined}>
       {st.map((s, i) => (
         <li key={s.name} ref={(el) => { refs.current[i] = el; }} className={`stop stop-${s.look}`} style={{ '--i': i } as React.CSSProperties}>
           <b><SourceIcon name={s.name} /><span>{s.label}</span></b><small className="num">{s.note}</small>
@@ -238,6 +239,8 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
   const t = scene ? title(scene) : '说一声就来';
   const r = scene?.route;
   const now = sounding(flows, scene?.run?.id);
+  const speakers = connected(devices);
+  const deck = speakers.find((d) => d.device_id === (ear || (now && scene?.deviceId))) ?? speakers.find((d) => onSpeaker(flows, d.device_id)) ?? speakers.find((d) => d.device_id === scene?.deviceId) ?? speakers[0];
   const o = scene?.run && outcome(scene.run);
   const where = scene?.at ? `${scene.device || '音箱'} ${day(scene.at) === '今天' ? '' : `${day(scene.at)} `}${clock(scene.at).slice(0, 5)}` : '试一句';
 
@@ -257,6 +260,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
             {now ? <Progress now={now} total={r?.duration_ms} /> : <span />}
             {words && <button type="button" className="expand" aria-pressed={wide} aria-label={wide ? '收起歌词' : '放大歌词'} onClick={() => setBig(!big)}><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d={wide ? 'M9 4v5H4M15 20v-5h5M4 4l5 5M20 20l-5-5' : 'M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6'} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></button>}
           </div>}
+          {deck && <Buttons key={deck.device_id} device={deck} name={many && !ear ? deviceTitle(deck) : undefined} />}
         </div>
         <Crossing scene={scene} trying={trying} />
         <div className="below">
@@ -265,10 +269,10 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
             {r && !native && r.duration_ms ? <span className="num">{length(r.duration_ms)}</span> : null}
             {scene && r && <button className="link" onClick={() => navigate({ page: 'flow', id: scene.command ? String(scene.command.id) : scene.run ? `r${scene.run.id}` : undefined })}>看它怎么走</button>}
             {kept && scene && kept.deviceId === scene.deviceId && kept.at! > scene.at! && kept.key !== scene.key && !picked && !tried ? <span className="kept-note"><HeartMark />{kept.route?.reason}</span> : null}
-            {r?.basis?.some((f) => f.name === '选它') && !tried ? <span className="muted">{r.basis.find((f) => f.name === '选它')!.text}</span> : null}
-            {r?.others?.length ? <span className="muted">也有{r.others.join('、')}的版本</span> : null}
+            {r?.basis?.some((f) => f.name === '选它') && !tried ? <span className="muted more">{r.basis.find((f) => f.name === '选它')!.text}</span> : null}
+            {r?.others?.length ? <span className="muted more">也有{r.others.join('、')}的版本</span> : null}
             {r?.track_id && !native ? <Heart key={`h${r.track_id}/${kept?.key}`} trackID={r.track_id} title={t} /> : null}
-            {r?.track_id && !native ? <Play key={r.track_id} trackID={r.track_id} title={t} devices={devices} /> : null}
+            {r?.track_id && !native ? <Play key={r.track_id} send={(d) => api.playTrack(d, r.track_id!)} title={t} devices={devices} /> : null}
           </div>
           <div className="recent">
             {mine.slice(0, 7).map((c) => {
@@ -310,7 +314,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
         </div>
         {days.map((d) => (
           <div key={d.label} className="log-day">
-            <h2>{d.label}<small className="num">{d.label === '今天' && ([['曲库', n.library], ['酷我', n.kuwo], ['酷狗', n.kugou], ['咪咕', n.migu], ['小爱', n.xiaomi]] as const).filter((x) => x[1]).map(([k, v]) => `${k} ${v}`).join('　')}</small></h2>
+            <h2>{d.label}<small className="num">{d.label === '今天' && ([['曲库', n.library], ['酷我', n.kuwo], ['酷狗', n.kugou], ['咪咕', n.migu], ['网易云', n.netease], ['小爱', n.xiaomi]] as const).filter((x) => x[1]).map(([k, v]) => `${k} ${v}`).join('　')}</small></h2>
             <ul>
               {d.items.map((c) => {
                 const nat = !c.route || c.route.decision === 'native';

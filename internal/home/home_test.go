@@ -118,7 +118,7 @@ func TestOursFromStartToEnd(t *testing.T) {
 	f := begin(hub, "晴天", 7)
 	next(t, ch, "speaker", func(s Speaker) bool {
 		return title(s) == "晴天" && s.State == Idle && s.Activity != nil && *s.Activity == "starting" && *s.Volume == 42 &&
-			*s.Lyrics == "/api/ha/lyrics/7" && s.Request.Text == "播放晴天" && *s.CoverVersion == "c晴天" && s.PositionMS == nil
+			*s.Lyrics == "/api/ha/lyrics/7" && s.Request != nil && s.CoverVersion != nil && s.Request.Text == "播放晴天" && *s.CoverVersion == "c晴天" && s.PositionMS == nil
 	})
 	f.Player(live.Player{Status: 1, Volume: 0, Ours: true, Elapsed: 5000, Phase: "playing", AtMS: time.Now().UnixMilli()})
 	next(t, ch, "speaker", func(s Speaker) bool {

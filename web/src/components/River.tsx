@@ -10,9 +10,9 @@ import { fishAtlas, Swimmer, type FishFrame } from './Fish';
 
 type P = [number, number];
 type Node = 'ear' | 'mind' | SourceName | 'gate' | 'spk';
-const wide: Record<Node, P> = { ear: [.065, .5], mind: [.22, .5], library: [.42, .06], kuwo: [.42, .28], kugou: [.42, .5], migu: [.42, .72], xiaomi: [.42, .94], gate: [.74, .4], spk: [.92, .5] };
-const tall: Record<Node, P> = { ear: [.5, .045], mind: [.5, .235], library: [.1, .46], kuwo: [.3, .46], kugou: [.5, .46], migu: [.7, .46], xiaomi: [.9, .46], gate: [.46, .675], spk: [.5, .9] };
-const sources: SourceName[] = ['library', 'kuwo', 'kugou', 'migu', 'xiaomi'];
+const wide: Record<Node, P> = { ear: [.065, .5], mind: [.22, .5], library: [.42, .05], kuwo: [.42, .23], kugou: [.42, .41], migu: [.42, .59], netease: [.42, .77], xiaomi: [.42, .95], gate: [.74, .4], spk: [.92, .5] };
+const tall: Record<Node, P> = { ear: [.5, .045], mind: [.5, .235], library: [.08, .46], kuwo: [.25, .46], kugou: [.42, .46], migu: [.58, .46], netease: [.75, .46], xiaomi: [.92, .46], gate: [.46, .675], spk: [.5, .9] };
+const sources: SourceName[] = ['library', 'kuwo', 'kugou', 'migu', 'netease', 'xiaomi'];
 const GOLD = '244,201,93', PALE = '190,220,228', CORAL = '240,132,112', PEACH = '255,190,158';
 
 /** A line, sampled once: x, y and the sideways step there. Dust: where, which lane, how fast. */
@@ -85,8 +85,8 @@ export function River({ story, now, listening }: { story: Story | null; now: () 
       for (let i = 0; i < dust.length; i += 3) dust.set([rnd(), (rnd() + rnd() - 1) * 1.1, .6 + rnd() * .8], i);
       return { pts, geo, dust, width };
     };
-    const es = { hear: edge('ear', 'mind', 5), library: edge('mind', 'library', 7), kuwo: edge('mind', 'kuwo', 7), kugou: edge('mind', 'kugou', 7), migu: edge('mind', 'migu', 7), xiaomi: edge('mind', 'xiaomi', 7),
-      gl: edge('library', 'gate', 7), gk: edge('kuwo', 'gate', 7), gg: edge('kugou', 'gate', 7), gm: edge('migu', 'gate', 7), gx: edge('xiaomi', 'spk', 7, upright ? 0 : 26), out: edge('gate', 'spk', 10) };
+    const es = { hear: edge('ear', 'mind', 5), library: edge('mind', 'library', 7), kuwo: edge('mind', 'kuwo', 7), kugou: edge('mind', 'kugou', 7), migu: edge('mind', 'migu', 7), netease: edge('mind', 'netease', 7), xiaomi: edge('mind', 'xiaomi', 7),
+      gl: edge('library', 'gate', 7), gk: edge('kuwo', 'gate', 7), gg: edge('kugou', 'gate', 7), gm: edge('migu', 'gate', 7), gn: edge('netease', 'gate', 7), gx: edge('xiaomi', 'spk', 7, upright ? 0 : 26), out: edge('gate', 'spk', 10) };
     type Name = keyof typeof es;
     const names = Object.keys(es) as Name[];
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -212,7 +212,7 @@ export function River({ story, now, listening }: { story: Story | null; now: () 
           want = along(es.xiaomi.pts, smooth(f) * (upright ? .6 : .72));
           ring('native', s.decided! + 900, t, spk, PALE, 80);
         } else if (end) {
-          const e: Name = end === 'library' ? 'gl' : end === 'kuwo' ? 'gk' : end === 'kugou' ? 'gg' : 'gm';
+          const e: Name = end === 'library' ? 'gl' : end === 'kuwo' ? 'gk' : end === 'kugou' ? 'gg' : end === 'migu' ? 'gm' : 'gn';
           const f = part(t, s.decided!, s.decided! + 420);
           const goes = !s.route!.preview || !!s.run;
           put(e, smooth(f) * (goes ? 1 : .5), GOLD, goes ? 1 : .3, goes ? .4 : 0);

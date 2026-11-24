@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './pwa';
 import App from './App';
 import 'misans/lib/Normal/MiSansVF.min.css';
 import './app.css';

@@ -6,6 +6,7 @@ import { Login, Setup } from './pages/Auth';
 import { Home } from './pages/Home';
 import { Brand } from './components/Mark';
 import { Fish } from './components/Fish';
+import { Signature } from './components/Signature';
 
 // Pages arrive on their own, right after the first one is up.
 const load = {
@@ -166,6 +167,7 @@ function Inner() {
           <got.account.Account key={String(scanOnAccount)} account={data.account} build={session.build} startScanning={scanOnAccount} onChanged={refresh} onLogout={logout} />
         )}
       </main>
+      {place.page !== 'account' && <footer className="colophon"><Signature /></footer>}
     </div>
   );
 }

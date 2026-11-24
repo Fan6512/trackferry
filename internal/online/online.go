@@ -1,7 +1,8 @@
 // Package online finds songs on online platforms through their own public endpoints.
 //
-// Songs the platform restricts to members are never resolved by other means: no paid-content
-// parsers, no accounts. What comes back is probed, and trial clips are refused.
+// Songs the platform restricts are never resolved by other means: no paid-content parsers.
+// The one account used is the owner's own, on 网易云. What comes back is probed, and trial
+// clips are refused.
 package online
 
 import (
@@ -34,12 +35,14 @@ type Reading struct {
 type Candidate struct {
 	Source     string        `json:"source"`
 	ID         string        `json:"-"`
+	Key        string        `json:"key,omitempty"` // names it to Take
 	ref        string        // second platform ID, when resolving needs one
 	Title      string        `json:"title"`
 	Artist     string        `json:"artist"`
 	Duration   time.Duration `json:"-"`
 	DurationMS int64         `json:"duration_ms"`
 	Restricted bool          `json:"restricted"` // members only or paid
+	Member     bool          `json:"-"`          // played by the rights of an account: never kept
 	Note       string        `json:"note,omitempty"`
 	Why        string        `json:"why,omitempty"` // not the song asked for
 }
@@ -134,6 +137,10 @@ type Service struct {
 	mu    sync.Mutex
 	srcs  []*entry
 	sem   chan struct{}
+
+	offMu   sync.Mutex
+	offered map[string]Candidate // shown by Search, until picked
+	order   []string
 }
 
 // New returns a Service over sources in order of preference, all enabled.
@@ -190,7 +197,14 @@ func (s *Service) record(e *entry, took time.Duration, err error) {
 	}
 }
 
+// Describe is err for people, without addresses.
+func Describe(err error) string { return describe(err) }
+
 func describe(err error) string {
+	var r refused
+	if errors.As(err, &r) {
+		return r.Error()
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "超时"
 	}
@@ -618,7 +632,7 @@ func (e httpError) Error() string { return fmt.Sprintf("平台返回 HTTP %d", i
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 // hosts are the only domains TrackFerry talks to, directly or through redirects.
-var hosts = []string{"kuwo.cn", "kugou.com", "migu.cn"}
+var hosts = []string{"kuwo.cn", "kugou.com", "migu.cn", "music.163.com", "music.126.net"}
 
 func allowedHost(h string) bool {
 	for _, d := range hosts {
@@ -659,4 +673,110 @@ func (g guard) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, errors.New("host not allowed")
 	}
 	return g.next.RoundTrip(r)
+}
+
+// maxOffered bounds the songs shown that can still be picked.
+const maxOffered = 600
+
+// Search lists what the enabled platforms offer for a free text, interleaved, and the
+// platforms that did not answer.
+func (s *Service) Search(ctx context.Context, q string) ([]Candidate, []Outcome) {
+	lists := make([][]Candidate, len(s.srcs))
+	outs := make([]Outcome, len(s.srcs))
+	var wg sync.WaitGroup
+	for i, e := range s.srcs {
+		outs[i] = Outcome{Source: e.src.Name(), Candidates: []Candidate{}}
+		s.mu.Lock()
+		on, open := e.enabled, time.Now().Before(e.open)
+		s.mu.Unlock()
+		switch {
+		case !on:
+			outs[i].State = StateDisabled
+			continue
+		case open:
+			outs[i].State, outs[i].Detail = StateOpen, "连续失败，暂停询问一会儿"
+			continue
+		}
+		wg.Go(func() {
+			start := time.Now()
+			c, done := context.WithTimeout(ctx, 4*time.Second)
+			defer done()
+			cands, err := s.search(c, e.src, q)
+			if ctx.Err() == nil {
+				s.record(e, time.Since(start), err)
+			}
+			outs[i].MS = time.Since(start).Milliseconds()
+			switch {
+			case err != nil:
+				outs[i].State, outs[i].Detail = StateError, describe(err)
+			case len(cands) == 0:
+				outs[i].State = StateMiss
+			default:
+				outs[i].State, lists[i] = StateHit, cands
+			}
+		})
+	}
+	wg.Wait()
+	out := []Candidate{}
+	for n := 0; ; n++ {
+		more := false
+		for _, l := range lists {
+			if n < len(l) {
+				out, more = append(out, l[n]), true
+			}
+		}
+		if !more || len(out) >= 60 {
+			break
+		}
+	}
+	s.offMu.Lock()
+	defer s.offMu.Unlock()
+	if s.offered == nil {
+		s.offered = map[string]Candidate{}
+	}
+	for i := range out {
+		c := &out[i]
+		c.Key = c.Source + ":" + c.ID
+		if _, ok := s.offered[c.Key]; !ok {
+			s.order = append(s.order, c.Key)
+		}
+		s.offered[c.Key] = *c
+	}
+	for len(s.order) > maxOffered {
+		delete(s.offered, s.order[0])
+		s.order = s.order[1:]
+	}
+	return out, outs
+}
+
+// ErrGone is a song that was not shown, or too long ago.
+var ErrGone = errors.New("搜索结果过期了，请重新搜索")
+
+// Take gets a song ready that Search has shown. The error is for people.
+func (s *Service) Take(ctx context.Context, key string) (*Found, error) {
+	s.offMu.Lock()
+	c, ok := s.offered[key]
+	s.offMu.Unlock()
+	if !ok {
+		return nil, ErrGone
+	}
+	for _, e := range s.srcs {
+		if e.src.Name() != c.Source {
+			continue
+		}
+		s.mu.Lock()
+		on := e.enabled
+		s.mu.Unlock()
+		if !on {
+			return nil, errors.New("这个音源关着")
+		}
+		ctx, cancel := context.WithTimeout(ctx, 2*totalBudget)
+		defer cancel()
+		st, err := s.resolveOne(ctx, e.src, c)
+		if err != nil {
+			return nil, errors.New(describe(err))
+		}
+		return &Found{Candidate: c, Stream: st}, nil
+	}
+	return nil, ErrGone
 }

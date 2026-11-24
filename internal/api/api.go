@@ -26,6 +26,7 @@ import (
 	"trackferry/internal/library"
 	"trackferry/internal/live"
 	"trackferry/internal/observe"
+	"trackferry/internal/online"
 	"trackferry/internal/routing"
 	"trackferry/internal/store"
 	"trackferry/internal/stream"
@@ -50,6 +51,7 @@ type Options struct {
 	Boot          store.Boot
 	Xiaomi        *xiaomi.Manager
 	Played        func(deviceID, title, artist string, track int64) // optional: a song was sent to a speaker
+	Dispatcher    *takeover.Dispatcher                              // nil: nothing follows a song
 	Observer      *observe.Observer                                 // nil in tests that do not need it
 	Engine        *takeover.Engine                                  // nil: no takeover in this server
 	Stream        *stream.Server                                    // serves /stream/ to speakers
@@ -57,6 +59,7 @@ type Options struct {
 	Cache         *cache.Cache // nil: online songs are not kept
 	Router        *routing.Router
 	Feiniu        *feiniu.Manager   // nil: no 飞牛音乐 in this server
+	Netease       *online.Netease   // nil: no 网易云 login
 	Live          *live.Hub         // nil: no live view
 	Home          *home.Tracker     // nil: no endpoint for home automation
 	Update        *update.Checker   // nil: never looks for a newer release
@@ -82,6 +85,8 @@ type Server struct {
 const (
 	sessionCookie = "tf_session"
 	sessionTTL    = 30 * 24 * time.Hour
+	keptTTL       = 180 * 24 * time.Hour // "保存密码"
+	visitTTL      = 12 * time.Hour       // without it, and gone with the browser
 	csrfHeader    = "X-Requested-With"
 	csrfValue     = "trackferry"
 )
@@ -159,6 +164,11 @@ func (s *Server) Handler() http.Handler {
 	authed("PATCH /api/commands/{id}", s.commandUpdate)
 	authed("POST /api/devices/{id}/takeover-test", s.takeoverTest)
 	authed("GET /api/takeover/runs", s.takeoverRuns)
+	authed("GET /api/playing", s.playing)
+	authed("PUT /api/playing", s.playingUpdate)
+	if s.Dispatcher != nil {
+		authed("POST /api/devices/{id}/play", s.play)
+	}
 	if s.Engine != nil {
 		authed("POST /api/devices/{id}/control", s.control)
 		authed("GET /api/devices/{id}/control", s.controlState)
@@ -187,6 +197,10 @@ func (s *Server) Handler() http.Handler {
 		authed("GET /api/library/shelf", s.libraryShelf)
 		authed("GET /api/library/albums/{id}", s.libraryAlbum)
 		authed("GET /api/library/artist", s.libraryArtist)
+		authed("GET /api/library/favorites", s.libraryFavorites)
+		authed("GET /api/library/playlists", s.libraryPlaylists)
+		authed("GET /api/library/playlists/{guid}", s.libraryPlaylist)
+		authed("GET /api/library/online", s.librarySearchOnline)
 		authed("GET /api/library/tracks/{id}/lyrics", s.libraryLyrics)
 		authed("POST /api/route/try", s.routeTry)
 		authed("GET /api/intent", s.intentGuide)
@@ -194,6 +208,13 @@ func (s *Server) Handler() http.Handler {
 		authed("GET /api/library/tracks/{id}/favorite", s.isFavorite)
 		authed("PUT /api/library/tracks/{id}/favorite", s.favorite)
 		authed("PATCH /api/sources/{name}", s.sourceUpdate)
+		if s.Netease != nil {
+			authed("GET /api/sources/netease/account", s.neteaseAccount)
+			authed("DELETE /api/sources/netease/account", s.neteaseLogout)
+			authed("POST /api/sources/netease/qr", s.neteaseStart)
+			authed("GET /api/sources/netease/qr", s.neteaseQR)
+			authed("DELETE /api/sources/netease/qr", s.neteaseCancel)
+		}
 	}
 	if s.Cache != nil {
 		authed("GET /api/cache", s.cacheStatus)
@@ -367,17 +388,23 @@ func (s *Server) throttled(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request) error {
+// startSession signs the browser in. A session that is not to outlive the browser leaves the
+// cookie without an end.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, ttl time.Duration) error {
 	tok := auth.NewToken()
-	exp := time.Now().Add(sessionTTL)
+	exp := time.Now().Add(ttl)
 	if err := s.Store.CreateSession(r.Context(), tok, exp); err != nil {
 		return err
 	}
 	_ = s.Store.PruneSessions(r.Context(), time.Now())
-	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: tok, Path: "/", Expires: exp, MaxAge: int(sessionTTL.Seconds()),
+	ck := &http.Cookie{
+		Name: sessionCookie, Value: tok, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
-	})
+	}
+	if ttl != visitTTL {
+		ck.Expires, ck.MaxAge = exp, int(ttl.Seconds())
+	}
+	http.SetCookie(w, ck)
 	return nil
 }
 
@@ -420,7 +447,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	s.limiter.Reset(clientKey(r))
 	_ = os.Remove(s.SetupCodePath) // single use
 	s.Log.Info("网页　管理密码已设置")
-	if err := s.startSession(w, r); err != nil {
+	if err := s.startSession(w, r, sessionTTL); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -430,6 +457,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
+		Remember *bool  `json:"remember"`
 	}
 	if !readJSON(w, r, &req) || s.throttled(w, r) {
 		return
@@ -449,7 +477,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.limiter.Reset(clientKey(r))
-	if err := s.startSession(w, r); err != nil {
+	ttl := time.Duration(sessionTTL)
+	if req.Remember != nil && *req.Remember {
+		ttl = keptTTL
+	} else if req.Remember != nil {
+		ttl = visitTTL
+	}
+	if err := s.startSession(w, r, ttl); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -492,7 +526,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.Store.DeleteAllSessions(r.Context())
-	if err := s.startSession(w, r); err != nil {
+	if err := s.startSession(w, r, sessionTTL); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -601,9 +635,14 @@ func (s *Server) devicesSync(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deviceUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Mode string `json:"mode"`
+		Mode string  `json:"mode"`
+		Hush *string `json:"hush"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Hush != nil {
+		s.deviceHush(w, r, *req.Hush)
 		return
 	}
 	switch req.Mode {
@@ -635,10 +674,12 @@ type deviceView struct {
 	store.Device
 	TakeoverAllowed bool `json:"takeover_allowed"`
 	CanWake         bool `json:"can_wake"`
+	CanHush         bool `json:"can_hush"`
 }
 
 func (s *Server) deviceView(d store.Device) deviceView {
-	return deviceView{d, s.takeoverAllowed(d), xiaomi.CanWake(d.Hardware, d.MiotDID)}
+	d.Hush = firstNonEmpty(takeover.HushStyle(d.Hush, d.Hardware, d.MiotDID), takeover.HushChosenNormal)
+	return deviceView{d, s.takeoverAllowed(d), xiaomi.CanWake(d.Hardware, d.MiotDID), xiaomi.CanHush(d.Hardware, d.MiotDID)}
 }
 
 func (s *Server) takeoverAllowed(d store.Device) bool {

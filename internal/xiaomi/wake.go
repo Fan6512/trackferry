@@ -65,23 +65,37 @@ func (c *Client) miotAction(ctx context.Context, s Session, did string, a wakeAc
 	if a.text {
 		in = append(in, "")
 	}
-	raw, err := json.Marshal(map[string]any{"params": map[string]any{"did": did, "siid": a.siid, "aiid": a.aiid, "in": in}})
+	res, err := c.miotCall(ctx, s, "/miotspec/action", map[string]any{"did": did, "siid": a.siid, "aiid": a.aiid, "in": in})
 	if err != nil {
 		return err
+	}
+	var out struct {
+		Code int `json:"code"`
+	}
+	if json.Unmarshal(res, &out) == nil && out.Code != 0 {
+		return &DeviceError{Code: out.Code}
+	}
+	return nil
+}
+
+// miotCall makes one call and returns its result.
+func (c *Client) miotCall(ctx context.Context, s Session, uri string, params any) (json.RawMessage, error) {
+	raw, err := json.Marshal(map[string]any{"params": params})
+	if err != nil {
+		return nil, err
 	}
 	nonce := make([]byte, 12)
 	rand.Read(nonce[:8])
 	binary.BigEndian.PutUint32(nonce[8:], uint32(time.Now().Unix()/60))
-	const uri = "/miotspec/action"
 	form, err := sign(uri, string(raw), s.SSecurity, nonce)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ep.Miot+uri, strings.NewReader(form.Encode()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent(s.DeviceID))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -89,36 +103,31 @@ func (c *Client) miotAction(ctx context.Context, s Session, did string, a wakeAc
 	req.Header.Set("Cookie", "userId="+s.UserID+"; serviceToken="+s.ServiceToken+"; PassportDeviceId="+s.DeviceID)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return errf(KindNetwork, "wake: %v", err)
+		return nil, errf(KindNetwork, "miot: %v", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return errf(KindNetwork, "wake: %v", err)
+		return nil, errf(KindNetwork, "miot: %v", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return ErrUnauthorized
+		return nil, ErrUnauthorized
 	}
 	var out struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Result  struct {
-			Code int `json:"code"`
-		} `json:"result"`
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Result  json.RawMessage `json:"result"`
 	}
 	if resp.StatusCode >= 400 || json.Unmarshal(body, &out) != nil {
-		return errf(KindUpstream, "wake: HTTP %d", resp.StatusCode)
+		return nil, errf(KindUpstream, "miot: HTTP %d", resp.StatusCode)
 	}
 	if out.Code != 0 {
 		if strings.Contains(strings.ToLower(out.Message), "auth") {
-			return ErrUnauthorized
+			return nil, ErrUnauthorized
 		}
-		return errf(KindUpstream, "wake: code %d", out.Code)
+		return nil, errf(KindUpstream, "miot: code %d", out.Code)
 	}
-	if out.Result.Code != 0 {
-		return &DeviceError{Code: out.Result.Code}
-	}
-	return nil
+	return out.Result, nil
 }
 
 // Wake has a speaker listen, as if its name had been called.

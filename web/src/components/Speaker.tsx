@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError, type Device, type Mode, type Press, type WatchStatus } from '../api';
+import { api, ApiError, type Device, type Hush, type Mode, type Press, type WatchStatus } from '../api';
+import { onSpeaker, useLive } from '../live';
+import { Pick } from './Pick';
 import { deviceSubtitle, deviceTitle, isOnline, modeHint, modeLabel } from '../copy';
 
 const modes: Mode[] = ['off', 'observe', 'takeover'];
@@ -50,6 +52,27 @@ function ModeSwitch({ device, onChange }: { device: Device; onChange: (d: Device
   );
 }
 
+const hushes: { value: Hush; label: string; says: string }[] = [
+  { value: 'normal', label: '普通', says: '音量调到零并打断，出歌最快' },
+  { value: 'strong', label: '加强', says: '再加一道米家静音和暂停，适合压不住的型号' },
+  { value: 'wait', label: '等小爱说完', says: '一直静音，估计小爱说完了再放歌，出歌慢一些' },
+];
+
+function HushPick({ device, onChange }: { device: Device; onChange: (d: Device) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const set = async (h: Hush) => {
+    try { onChange(await api.setHush(device.device_id, h)); setError(null); } catch (e) { setError((e as ApiError).message); }
+  };
+  return (
+    <div className="hush">
+      <span>压住小爱的回答</span>
+      <Pick label={`${deviceTitle(device)}压住小爱回答的方式`} value={device.hush} choices={hushes} onPick={set} />
+      <small>{hushes.find((h) => h.value === device.hush)?.says}</small>
+      {error && <p className="field-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 /** The speaker itself; its ring shows what it is doing. */
 function Body({ mode, state }: { mode: Mode; state?: WatchStatus['state'] }) {
   const on = mode !== 'off' && state === 'listening';
@@ -82,6 +105,7 @@ export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?
         </p>
         {device.in_account && device.mode !== 'off' && <Buttons device={device} />}
         <ModeSwitch device={device} onChange={onChange} />
+        {device.in_account && device.can_hush && device.mode === 'takeover' && <HushPick device={device} onChange={onChange} />}
         <p className="speaker-hint">
           {device.in_account ? modeHint[device.mode] : '设置会保留，重新绑定后恢复。'}
           {watch && device.mode !== 'off' && <small className={watch.state === 'error' ? 'bad' : ''}>{watchText[watch.state]}{watch.error ? `：${watch.error}` : watch.recorded > 0 ? `，启动后听到 ${watch.recorded} 次点歌` : ''}</small>}
@@ -99,8 +123,11 @@ const icons = {
 };
 
 /** Play, pause, stop, wake and volume. */
-function Buttons({ device }: { device: Device }) {
+export function Buttons({ device, name }: { device: Device; name?: string }) {
   const id = device.device_id;
+  const flow = onSpeaker(useLive().flows, id);
+  const phase = flow?.player?.phase;
+  const [meant, setMeant] = useState<'playing' | 'paused' | 'idle' | null>(null); // until the speaker is heard from
   const [now, setNow] = useState<{ state: string; volume: number | null } | null>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const [busy, setBusy] = useState<Press | null>(null);
@@ -117,35 +144,46 @@ function Buttons({ device }: { device: Device }) {
     const t = setInterval(() => { if (!document.hidden) load(); }, 8000);
     return () => { alive.current = false; clearInterval(t); clearTimeout(again.current); };
   }, [load]);
+  useEffect(() => { setMeant(null); load(); }, [phase, flow?.id, load]);
+  useEffect(() => {
+    if (!meant) return;
+    const t = setTimeout(() => setMeant(null), 5000);
+    return () => clearTimeout(t);
+  }, [meant]);
+  const state = meant ?? (phase ? (phase === 'paused' ? 'paused' : 'playing') : now?.state);
   const press = async (action: Press, volume?: number) => {
     setBusy(action);
     setError(null);
     setSaid(null);
+    const to = ({ play: 'playing', pause: 'paused', stop: 'idle' } as const)[action as 'play'];
+    if (to) { setMeant(to); setNow((n) => ({ state: to, volume: n?.volume ?? null })); }
     try {
       await api.press(id, action, volume);
       if (action === 'wake') setSaid('已唤醒，直接说话就行');
       if (volume !== undefined) setNow((n) => ({ state: n?.state ?? 'idle', volume }));
     } catch (e) {
+      setMeant(null);
       setError((e as ApiError).message);
     } finally {
-      setBusy(null);
+      setBusy((b) => (b === action ? null : b));
       setDrag(null);
       clearTimeout(again.current);
       again.current = setTimeout(load, 900); // what was pressed takes a moment
     }
   };
   const commit = () => { if (drag !== null && drag !== now?.volume) press('volume', drag); else setDrag(null); };
-  const button = (a: Press, label: string) => <button type="button" className="ctl" onClick={() => press(a)} disabled={busy !== null} title={label} aria-label={`${deviceTitle(device)}${label}`}>{busy === a ? <span className="spinner spinner-tiny" /> : icons[a as keyof typeof icons]}</button>;
+  const button = (a: Press, label: string) => <button type="button" className="ctl" onClick={() => press(a)} disabled={busy === a} title={label} aria-label={`${deviceTitle(device)}${label}`}>{busy === a ? <span className="spinner spinner-tiny" /> : icons[a as keyof typeof icons]}</button>;
   const volume = drag ?? now?.volume ?? null;
   return (
     <div className="ctls">
       <div className="ctl-row">
-        {now?.state === 'playing' ? button('pause', '暂停') : button('play', '播放')}
+        {name && <span className="ctl-name">{name}</span>}
+        {state === 'playing' ? button('pause', '暂停') : button('play', '播放')}
         {button('stop', '停止')}
         {device.can_wake && button('wake', '唤醒')}
         <label className="ctl-vol">
           {icons.volume}
-          <input type="range" min={0} max={100} value={volume ?? 0} disabled={volume === null || busy !== null} aria-label={`${deviceTitle(device)}音量`}
+          <input type="range" min={0} max={100} value={volume ?? 0} disabled={volume === null} aria-label={`${deviceTitle(device)}音量`}
             onChange={(e) => setDrag(Number(e.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
           <small className="num">{volume ?? '–'}</small>
         </label>

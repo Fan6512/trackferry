@@ -178,7 +178,7 @@ export function FlowPage({ id, devices }: { id?: string; devices: Device[] }) {
         {error && <Notice tone="error" title={error} />}
         {!live.on && cmds && <p className="muted">实时连接断开，正在重连</p>}
         <div className="flow-cols">
-          {story?.route && story.kind !== 'test' && story.kind !== 'push' && <div>{story.route.basis?.length ? <><h2>为什么这样</h2><Basis route={story.route} /></> : null}{story.route.layers.some((l) => l.name !== 'xiaomi') && <><h2>问过谁</h2><RouteDetail route={story.route} /></>}{story.route.track_id && story.route.decision !== 'native' ? <div className="flow-play"><Play key={story.route.track_id} trackID={story.route.track_id} title={story.route.title ?? ''} devices={devices} /></div> : null}</div>}
+          {story?.route && story.kind !== 'test' && story.kind !== 'push' && <div>{story.route.basis?.length ? <><h2>为什么这样</h2><Basis route={story.route} /></> : null}{story.route.layers.some((l) => l.name !== 'xiaomi') && <><h2>问过谁</h2><RouteDetail route={story.route} /></>}{story.route.track_id && story.route.decision !== 'native' ? <div className="flow-play"><Play key={story.route.track_id} send={(d) => api.playTrack(d, story.route!.track_id!)} title={story.route.title ?? ''} devices={devices} /></div> : null}</div>}
           <div>
             {run && <><h2>接管</h2><RunSteps run={run} /></>}
             {command && <><h2>小爱</h2><p>{command.answer || '没有语音回答'}{command.answer_types.includes('AUDIO') && '（播放了音频）'}</p></>}

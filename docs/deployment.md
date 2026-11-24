@@ -83,7 +83,7 @@ docker compose logs trackferry
 | 路径 | 内容 |
 | --- | --- |
 | `data/trackferry.db` | 点歌记录、音箱设置、曲库索引 |
-| `data/private/` | 小米与飞牛的登录凭据、脚本令牌，权限 0600 |
+| `data/private/` | 小米、飞牛、网易云的登录凭据、脚本令牌，权限 0600 |
 | `data/cache/` | 听过的线上歌和它们的目录，可以随时删，不必备份。挂载了 `/cache` 时歌在那里 |
 | `data/config.yaml` | 可选的配置文件 |
 

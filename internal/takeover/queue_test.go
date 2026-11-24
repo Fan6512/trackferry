@@ -29,6 +29,7 @@ func (s *queueStarter) Start(_ context.Context, r Request) (store.TakeoverRun, e
 	return store.TakeoverRun{}, nil
 }
 func (s *queueStarter) Release(string)                                         {}
+func (s *queueStarter) Quiet(string) func(bool)                                { return func(bool) {} }
 func (s *queueStarter) Hear(string, Heard)                                     {}
 func (s *queueStarter) Playing(string) bool                                    { return !s.idle }
 func (s *queueStarter) Say(_ context.Context, _ string, w func() string) error { w(); return nil }
@@ -212,7 +213,7 @@ func TestRunTellsHowItEnded(t *testing.T) {
 			t.Errorf("%s: never ended", c.name)
 		}
 		sp.mu.Lock()
-		if len(sp.volumes) != 0 || sp.calls[0] != "status" || sp.calls[1] != "play" {
+		if len(sp.volumes) != 0 || sp.calls[0] != "play" {
 			t.Errorf("%s: %v", c.name, sp.calls)
 		}
 		sp.mu.Unlock()

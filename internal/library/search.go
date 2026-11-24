@@ -225,6 +225,12 @@ func (x *index) pick(ids []int) (Match, int) {
 	if len(ids) == 0 {
 		return Match{}, 0
 	}
+	good := x.ordinary(ids)
+	return Match{TrackRow: x.rows[good[rand.IntN(len(good))]]}, len(ids)
+}
+
+// ordinary keeps ordinary songs, or all if there are none.
+func (x *index) ordinary(ids []int) []int {
 	var good []int
 	for _, i := range ids {
 		t := x.rows[i]
@@ -235,7 +241,7 @@ func (x *index) pick(ids []int) (Match, int) {
 	if len(good) == 0 {
 		good = ids
 	}
-	return Match{TrackRow: x.rows[good[rand.IntN(len(good))]]}, len(ids)
+	return good
 }
 
 // Find is the free-text search of the management page.

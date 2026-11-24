@@ -37,7 +37,7 @@ type Candidate struct {
 
 // Layer is one stop on the way.
 type Layer struct {
-	Name       string      `json:"name"` // library | kuwo | migu | xiaomi
+	Name       string      `json:"name"` // library | kuwo | kugou | migu | netease | xiaomi
 	State      string      `json:"state"`
 	Opinion    bool        `json:"opinion,omitempty"` // only asked who sang it first, not for audio
 	MS         int64       `json:"ms"`
@@ -50,7 +50,7 @@ type Route struct {
 	Preview    bool     `json:"preview"` // watch-only: nothing was played
 	Decision   string   `json:"decision"`
 	Reason     string   `json:"reason,omitempty"` // why Xiao AI keeps it
-	Source     string   `json:"source,omitempty"` // library | kuwo | migu
+	Source     string   `json:"source,omitempty"` // library | kuwo | kugou | migu | netease
 	Title      string   `json:"title,omitempty"`
 	Artist     string   `json:"artist,omitempty"`
 	Path       string   `json:"path,omitempty"`
@@ -92,7 +92,9 @@ type Router struct {
 	Cached func(asked string) *online.Found
 	// Lists reads the lists of 飞牛音乐; optional.
 	Lists Lists
-	Log   *slog.Logger
+	// ArtistQueue reports whether an artist's other songs follow the first; nil: no.
+	ArtistQueue func() bool
+	Log         *slog.Logger
 	// Openable reports whether a local file can be read right now (nil: assume so).
 	Openable func(rel string) bool
 }
@@ -495,6 +497,13 @@ func (r *Router) pick(rt *Route, in intent.Intent) {
 		l.Candidates = show([]library.Match{m})
 		rt.Because("选它", "从 %d 首里随机抽到", n)
 		rt.take(m)
+		if in.Kind == intent.KindArtist && r.ArtistQueue != nil && r.ArtistQueue() {
+			if ids := r.Library.ArtistIDs(in.Artist); len(ids) > 1 {
+				rt.List, rt.queue = in.Artist+"的歌", shuffled(ids, m.ID)
+				l.Detail = fmt.Sprintf("%s的 %d 首歌，随机连播", in.Artist, len(ids))
+				rt.Basis[len(rt.Basis)-1].Text = l.Detail
+			}
+		}
 		break
 	}
 	if l.State != online.StateHit {

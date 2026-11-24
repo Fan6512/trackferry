@@ -60,7 +60,7 @@ type Speaker struct {
 	State      string  `json:"state"`
 	Activity   *string `json:"activity"` // starting | talking | resuming
 	SourceKind *string `json:"source_kind"`
-	Source     *string `json:"source"` // library | kuwo | kugou | migu
+	Source     *string `json:"source"` // library | kuwo | kugou | migu | netease
 
 	PlayID       *int64   `json:"play_id"` // another number means another play, even of the same song
 	TrackID      *int64   `json:"track_id"`

@@ -1,0 +1,5 @@
+.source-state .ne { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: baseline; } .ne-name { max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ne button { position: relative; padding: 0; border: 0; background: none; font: inherit; color: var(--stone); } .ne button::after { content: ''; position: absolute; inset: -11px -6px; } .ne button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.ne-login { margin: auto; padding: 0; width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); border: 0; border-radius: 10px; background: #18242a; color: var(--ink); }
+.ne-login::backdrop { background: rgb(4 10 13 / .72); } .ne-login > div { display: grid; justify-items: center; gap: 12px; padding: 24px; text-align: center; } .ne-login h3 { font-size: 18px; font-weight: 520; } .ne-login small { color: var(--ink3); }
+.ne-code { position: relative; display: grid; place-items: center; width: 208px; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: #fff; } .ne-code svg { width: 100%; height: 100%; } .ne-code.stale svg { opacity: .12; } .ne-code .btn { position: absolute; color: #0f181b; }

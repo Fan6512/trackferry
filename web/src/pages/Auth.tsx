@@ -76,8 +76,19 @@ export function Setup({ onDone }: { onDone: () => void }) {
   );
 }
 
+const KEEP = 'trackferry.keep';
+const remembered = () => { try { return localStorage.getItem(KEEP) !== 'off'; } catch { return true; } };
+
+/** Gives the password to the browser's own store; the page itself never writes it down. */
+async function handOver(password: string) {
+  const Credential = (window as { PasswordCredential?: new (c: { id: string; name: string; password: string }) => globalThis.Credential }).PasswordCredential;
+  if (!Credential || !navigator.credentials) return;
+  await Promise.race([navigator.credentials.store(new Credential({ id: 'TrackFerry', name: 'TrackFerry', password })).catch(() => {}), new Promise((r) => setTimeout(r, 800))]);
+}
+
 export function Login({ onDone }: { onDone: () => void }) {
   const [pw, setPw] = useState('');
+  const [keep, setKeep] = useState(remembered);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
@@ -85,7 +96,9 @@ export function Login({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api.login(pw);
+      await api.login(pw, keep);
+      try { localStorage.setItem(KEEP, keep ? 'on' : 'off'); } catch { /* asked again next time */ }
+      if (keep) await handOver(pw);
       onDone();
     } catch (err) {
       setError((err as ApiError).message);
@@ -96,11 +109,13 @@ export function Login({ onDone }: { onDone: () => void }) {
   };
   return (
     <AuthShell title="TrackFerry" lead="">
-      <form className="form" onSubmit={submit}>
+      <form className="form" onSubmit={submit} autoComplete={keep ? 'on' : 'off'}>
+        <input className="login-who" type="text" name="username" value="TrackFerry" autoComplete="username" readOnly tabIndex={-1} aria-hidden="true" />
         <label className="field">
           <span>管理密码</span>
-          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" autoFocus required />
+          <input type="password" name="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete={keep ? 'current-password' : 'off'} autoFocus required />
         </label>
+        <label className="login-keep"><input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} /><span>保存密码<small>{keep ? '由浏览器保存，180 天内不用再登录' : '关掉浏览器就要重新登录'}</small></span></label>
         {error && <p className="field-error" role="alert">{error}</p>}
         <button className="btn btn-primary btn-block" disabled={busy || !pw}>{busy ? '正在登录…' : '登录'}</button>
         <p className="form-foot">忘记密码：在 NAS 上运行 <code>docker exec trackferry /trackferry reset-admin</code>，再用它给出的新初始化码重设。</p>

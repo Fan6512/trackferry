@@ -32,6 +32,7 @@ type Starter interface {
 	Start(ctx context.Context, req Request) (store.TakeoverRun, error)
 	Release(deviceID string)
 	Hear(deviceID string, h Heard)
+	Quiet(deviceID string) func(back bool)
 	Playing(deviceID string) bool
 	Say(ctx context.Context, deviceID string, work func() string) error
 }
@@ -63,6 +64,9 @@ type Dispatcher struct {
 	last map[string]lastSong
 
 	queues map[string]*queue
+
+	// Random draws songs of the library to go on with; optional.
+	Random func(n int) []int64
 }
 
 type lastSong struct {
@@ -240,6 +244,19 @@ func Follow(h *stream.Handle, tr *live.Trace) {
 	}
 }
 
+// Halt ends the list on a speaker and whatever is being prepared for it.
+func (d *Dispatcher) Halt(dev string) {
+	d.Drop(dev)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if g := d.gens[dev]; g != nil {
+		g.n++
+		if g.cancel != nil {
+			g.cancel()
+		}
+	}
+}
+
 // OnCommand is the observer callback.
 func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, mode string) {
 	ctx, current, done := d.begin(ctx, c.DeviceID)
@@ -366,6 +383,12 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageSkipped, "playback controls stay with Xiao AI")
 		return
 	}
+	// Not a word of the answer, however long it takes to find the song.
+	unquiet := func(bool) {}
+	if take && in.Music() {
+		unquiet = once(d.Engine.Quiet(c.DeviceID))
+		defer unquiet(true)
+	}
 	// Whatever is asked for now, the list is over.
 	list := d.unqueue(c.DeviceID)
 	if p, ok := d.previous(c.DeviceID); ok {
@@ -437,11 +460,11 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageSkipped, "superseded while preparing")
 		return
 	}
-	req := Request{DeviceID: c.DeviceID, Hardware: hardware, Kind: "command", CommandID: c.ID, UpstreamMS: c.UpstreamMS, Track: t, Trace: tr}
+	req := Request{DeviceID: c.DeviceID, Hardware: hardware, Kind: "command", CommandID: c.ID, UpstreamMS: c.UpstreamMS, Track: t, Trace: tr, Answer: utf8.RuneCountInString(c.Answer)}
 	if ids := rt.Queue(); len(ids) > 0 && d.Next != nil {
-		q := &queue{dev: c.DeviceID, hardware: hardware, list: rt.List, ids: ids}
-		d.enqueue(q)
-		req.Ended = d.turn(q)
+		req.Ended = d.follow(&queue{dev: c.DeviceID, hardware: hardware, list: rt.List, ids: ids})
+	} else {
+		req.Ended = d.After(c.DeviceID, hardware, rt.TrackID, false)
 	}
 	if _, err := d.Engine.Start(ctx, req); err != nil {
 		d.Drop(c.DeviceID)
@@ -450,5 +473,12 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageNative, "could not start takeover")
 		return
 	}
+	unquiet(false) // the run has it now
 	stage(store.StageTakenOver, rt.Source)
+}
+
+// once lets only the first call through.
+func once(f func(bool)) func(bool) {
+	var o sync.Once
+	return func(b bool) { o.Do(func() { f(b) }) }
 }

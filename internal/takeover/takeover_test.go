@@ -151,7 +151,9 @@ func TestTakeoverMutesStopsPlaysConfirmsAndRestores(t *testing.T) {
 	if len(sp.volumes) != 2 || sp.volumes[0] != 0 || sp.volumes[1] != 40 {
 		t.Fatalf("volumes %v", sp.volumes)
 	}
-	if !strings.HasPrefix(strings.Join(sp.calls, ","), "status,volume,pause,stop,pause,stop,play") {
+	// Muting and stopping go out together, all before the song.
+	before, _, _ := strings.Cut(strings.Join(sp.calls, ","), "play")
+	if strings.Count(before, "volume") != 1 || strings.Count(before, "pause") != 2 || strings.Count(before, "stop") != 2 {
 		t.Fatalf("calls %v", sp.calls)
 	}
 	if _, ok, _ := st.PendingVolume(context.Background(), "d1"); ok {
@@ -453,8 +455,9 @@ func (f *fakeStarter) Start(_ context.Context, r Request) (store.TakeoverRun, er
 	f.started = append(f.started, r)
 	return store.TakeoverRun{}, nil
 }
-func (f *fakeStarter) Release(string)     { f.released++ }
-func (f *fakeStarter) Hear(string, Heard) {}
+func (f *fakeStarter) Release(string)          { f.released++ }
+func (f *fakeStarter) Hear(string, Heard)      {}
+func (f *fakeStarter) Quiet(string) func(bool) { return func(bool) {} }
 
 func (f *fakeStarter) Playing(string) bool { return false }
 

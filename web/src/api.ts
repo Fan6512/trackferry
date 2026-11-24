@@ -5,6 +5,13 @@ export interface UpdateStatus { enabled: boolean; current: string; latest?: stri
   proxy?: string; installable?: boolean; failed?: string; install?: { phase: 'download' | 'check' | 'restart'; done?: number; total?: number; error?: string } }
 
 export interface HomeStatus { enabled: boolean; has_token: boolean; connected: number }
+export interface Playing { artist: boolean; after: boolean; hours: number }
+export type Hush = 'normal' | 'strong' | 'wait';
+export interface OnlineSong { key: string; source: 'kuwo' | 'kugou' | 'migu' | 'netease'; title: string; artist: string; duration_ms: number; restricted: boolean; note?: string }
+export interface OnlineOutcome { source: string; state: string; detail?: string }
+export interface Playlist { guid: string; name: string }
+/** What can be sent to a speaker to play. */
+export type Sendable = { source: 'favorites' } | { source: 'playlist' | 'album' | 'online'; id: string } | { source: 'artist'; name: string };
 export type Press = 'play' | 'pause' | 'stop' | 'volume' | 'wake';
 
 export type Mode = 'off' | 'observe' | 'takeover';
@@ -25,6 +32,9 @@ export interface Device {
   takeover_allowed: boolean;
   /** Wake can be pressed from here. */
   can_wake: boolean;
+  /** Xiao AI can be silenced through Mi Home. */
+  can_hush: boolean;
+  hush: Hush;
 }
 
 export type SyncOutcome = 'ok' | 'empty' | 'relink_required' | 'error';
@@ -100,7 +110,7 @@ export interface Command {
   route: Route | null;
 }
 
-export type LayerName = 'library' | 'kuwo' | 'kugou' | 'migu' | 'xiaomi';
+export type LayerName = 'library' | 'kuwo' | 'kugou' | 'migu' | 'netease' | 'xiaomi';
 export type LayerState = 'hit' | 'miss' | 'ambiguous' | 'restricted' | 'error' | 'timeout' | 'disabled' | 'open' | 'skipped' | 'asking';
 
 export interface Candidate {
@@ -125,7 +135,7 @@ export interface Route {
   preview: boolean;
   decision: 'local' | 'online' | 'native';
   reason?: string;
-  source?: 'library' | 'kuwo' | 'kugou' | 'migu';
+  source?: 'library' | 'kuwo' | 'kugou' | 'migu' | 'netease';
   title?: string;
   artist?: string;
   path?: string;
@@ -214,8 +224,11 @@ export interface LibraryStatus {
 export interface Missing { title: string; artist: string; plays: number; last_ms: number; owned: boolean }
 export interface CacheStatus { mounted: boolean; limit_mb: number; bytes: number; songs: number }
 
+export interface NeteaseAccount { linked: boolean; name?: string; vip: boolean; linked_ms?: number; expired: boolean }
+export interface NeteaseQR { state: 'waiting' | 'scanned' | 'expired' | 'done'; account: NeteaseAccount }
+
 export interface SourceHealth {
-  source: 'kuwo' | 'kugou' | 'migu';
+  source: 'kuwo' | 'kugou' | 'migu' | 'netease';
   enabled: boolean;
   ok: number;
   failed: number;
@@ -340,7 +353,7 @@ export const api = {
   installUpdate: () => request<UpdateStatus>('POST', '/api/update/install'),
   session: () => request<Session>('GET', '/api/session'),
   setup: (setup_code: string, password: string) => request('POST', '/api/setup', { setup_code, password }),
-  login: (password: string) => request('POST', '/api/login', { password }),
+  login: (password: string, remember: boolean) => request('POST', '/api/login', { password, remember }),
   logout: () => request('POST', '/api/logout'),
   changePassword: (current: string, next: string) => request('POST', '/api/password', { current, new: next }),
 
@@ -384,12 +397,25 @@ export const api = {
   guide: () => request<Guide>('GET', '/api/intent'),
   explain: (text: string) => request<Reading>('POST', '/api/intent', { text }),
   tryRoute: (text: string) => request<{ intent: Intent; route: Route }>('POST', '/api/route/try', { text }),
+  netease: () => request<NeteaseAccount>('GET', '/api/sources/netease/account'),
+  neteaseLogout: () => request<NeteaseAccount>('DELETE', '/api/sources/netease/account'),
+  neteaseStart: () => request<{ url: string }>('POST', '/api/sources/netease/qr'),
+  neteaseQR: () => request<NeteaseQR>('GET', '/api/sources/netease/qr'),
+  neteaseCancel: () => request<void>('DELETE', '/api/sources/netease/qr'),
   setSource: (name: string, enabled: boolean) => request<{ sources: SourceHealth[] }>('PATCH', `/api/sources/${name}`, { enabled }),
   press: (id: string, action: Press, volume?: number) => request<void>('POST', `/api/devices/${encodeURIComponent(id)}/control`, { action, volume }),
   controls: (id: string) => request<{ state: 'playing' | 'paused' | 'idle'; volume: number | null }>('GET', `/api/devices/${encodeURIComponent(id)}/control`),
   home: () => request<HomeStatus>('GET', '/api/home'),
   setHome: (enabled: boolean) => request<HomeStatus>('PUT', '/api/home', { enabled }),
   homeToken: () => request<{ token: string }>('POST', '/api/home/token'),
+  setHush: (id: string, hush: Hush) => request<Device>('PATCH', `/api/devices/${encodeURIComponent(id)}`, { hush }),
+  play: (id: string, what: Sendable) => request<TakeoverRun>('POST', `/api/devices/${encodeURIComponent(id)}/play`, what),
+  playing: () => request<Playing>('GET', '/api/playing'),
+  setPlaying: (p: Partial<Playing>) => request<Playing>('PUT', '/api/playing', p),
+  favorites: (from = 0) => request<{ tracks: Track[] | null; total: number }>('GET', `/api/library/favorites?from=${from}`),
+  playlists: () => request<{ playlists: Playlist[] }>('GET', '/api/library/playlists'),
+  playlist: (guid: string) => request<{ name: string; tracks: Track[]; total: number }>('GET', `/api/library/playlists/${encodeURIComponent(guid)}`),
+  searchOnline: (q: string) => request<{ songs: OnlineSong[]; sources: OnlineOutcome[] }>('GET', `/api/library/online?q=${encodeURIComponent(q)}`),
   setMode: (id: string, mode: Mode) => request<Device>('PATCH', `/api/devices/${encodeURIComponent(id)}`, { mode }),
 };
 

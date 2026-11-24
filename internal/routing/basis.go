@@ -115,7 +115,7 @@ func (r *Route) online(outs []online.Outcome) {
 			asked++
 		}
 	}
-	who := map[string]string{"kuwo": "酷我", "kugou": "酷狗", "migu": "咪咕"}[r.Source]
+	who := map[string]string{"kuwo": "酷我", "kugou": "酷狗", "migu": "咪咕", "netease": "网易云"}[r.Source]
 	if who == "" {
 		return
 	}
@@ -126,7 +126,7 @@ func (r *Route) online(outs []online.Outcome) {
 		}
 	}
 	if asked > 1 {
-		r.Because("选它", "同时问了 %d 家，%s先给出免费的完整版", asked, who)
+		r.Because("选它", "同时问了 %d 家，%s先给出完整版", asked, who)
 	} else {
 		r.Because("选它", "%s有免费的完整版", who)
 	}

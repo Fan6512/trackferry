@@ -24,6 +24,7 @@ type Device struct {
 	MiotDID     string    `json:"miot_did"`
 	Presence    string    `json:"presence"`
 	Mode        string    `json:"mode"`
+	Hush        string    `json:"hush"` // "" (up to the model) | normal | strong | wait
 	FirstSeenAt time.Time `json:"first_seen_at"`
 	LastSeenAt  time.Time `json:"last_seen_at"`
 	InAccount   bool      `json:"in_account"`
@@ -110,7 +111,7 @@ func (s *Store) SyncDevices(ctx context.Context, found []DiscoveredDevice, now t
 
 // Devices lists all known speakers, those still in the account first.
 func (s *Store) Devices(ctx context.Context) ([]Device, error) {
-	rows, err := s.rd.QueryContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	rows, err := s.rd.QueryContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account, hush
 		FROM devices ORDER BY in_account DESC, name, device_id`)
 	if err != nil {
 		return nil, err
@@ -136,7 +137,7 @@ func (s *Store) SetDeviceMode(ctx context.Context, id, mode string) (Device, err
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Device{}, ErrNotFound
 	}
-	row := s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	row := s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account, hush
 		FROM devices WHERE device_id = ?`, id)
 	d, err := scanDevice(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -145,13 +146,19 @@ func (s *Store) SetDeviceMode(ctx context.Context, id, mode string) (Device, err
 	return d, err
 }
 
+// SetDeviceHush changes how a speaker is kept quiet while Xiao AI answers.
+func (s *Store) SetDeviceHush(ctx context.Context, id, hush string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE devices SET hush = ? WHERE device_id = ?", hush, id)
+	return err
+}
+
 type scanner interface{ Scan(...any) error }
 
 func scanDevice(r scanner) (Device, error) {
 	var d Device
 	var first, last string
 	var in int
-	if err := r.Scan(&d.DeviceID, &d.Name, &d.Alias, &d.Model, &d.Hardware, &d.MiotDID, &d.Presence, &d.Mode, &first, &last, &in); err != nil {
+	if err := r.Scan(&d.DeviceID, &d.Name, &d.Alias, &d.Model, &d.Hardware, &d.MiotDID, &d.Presence, &d.Mode, &first, &last, &in, &d.Hush); err != nil {
 		return d, err
 	}
 	d.InAccount = in == 1
