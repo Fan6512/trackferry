@@ -60,7 +60,9 @@ step "标签与 Release"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null || scripts/release-notes.sh "$v" | git tag -a "$tag" --cleanup=whitespace -F -
 git push origin "$tag"
 # What the settings page installs: the binary of each platform with its signature.
-assets=(compose.yaml)
+assets=(compose.yaml dist/trackferry-homeassistant.zip)
+mkdir -p dist
+git archive --format=zip -o dist/trackferry-homeassistant.zip HEAD custom_components/trackferry # unpacks into the configuration folder
 for arch in amd64 arm64; do
   f="dist/trackferry-linux-$arch"
   cp "dist/$arch/trackferry" "$f"

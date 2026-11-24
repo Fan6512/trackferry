@@ -5,7 +5,19 @@ TrackFerry 可以把每台音箱的真实状态实时给 Home Assistant：在放
 ## 打开
 
 1. “设置 → Home Assistant”打开开关，点“生成令牌”。令牌只显示一次。
-2. 在 Home Assistant 的集成里填服务地址（与管理页相同，默认 `http://<NAS 地址>:18561`）和令牌。
+2. 按下面的步骤装好集成，在“设置 → 设备与服务 → 添加集成”里选 TrackFerry，填服务地址（与管理页相同，默认 `http://<NAS 地址>:18561`）和令牌。
+3. 逐台确认对应的已有音箱。能认出来的已填好，选好后实体归到那台音箱的设备下；留空则单独建一台。以后可以在集成的选项里改。
+
+## 安装集成
+
+集成在仓库的 `custom_components/trackferry`，需要 Home Assistant 2026.11.1 或更新。
+
+- **HACS**：右上角菜单 → 自定义存储库，填 `https://github.com/madrays/trackferry`，类别选“集成”，下载后重启 Home Assistant。
+- **手动**：下载 Release 里的 `trackferry-homeassistant.zip`，解压到 Home Assistant 的配置目录，使 `custom_components/trackferry` 就位，然后重启。
+
+每台音箱有一个媒体播放器（歌曲、封面、进度、播放、暂停、停止、音量）和一个唤醒按钮。口令、歌名和进度不写入 Home Assistant 的历史记录。
+
+## 令牌和范围
 
 令牌只能用于 `/api/ha/` 下的接口，不能登录管理页。换新令牌或关闭开关时，已有连接立即断开。关闭时这些接口一律返回 404。
 
