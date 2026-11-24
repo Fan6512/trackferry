@@ -86,7 +86,7 @@ TrackFerry 让小爱音箱播放你 NAS 上的歌。说一句“播放潮汐来�
 **1. 下载部署文件**
 
 ```sh
-mkdir -p trackferry/data && cd trackferry && curl -fLO https://raw.githubusercontent.com/madrays/trackferry/main/compose.yaml
+mkdir -p trackferry && cd trackferry && curl -fLO https://raw.githubusercontent.com/madrays/trackferry/main/compose.yaml
 ```
 
 **2. 修改地址**
@@ -100,7 +100,7 @@ TRACKFERRY_URL: "http://192.168.1.10:18561"
 **3. 启动**
 
 ```sh
-sudo chown -R 10001:10001 data && docker compose up -d
+docker compose up -d
 ```
 
 **4. 查看初始化码**
@@ -139,7 +139,7 @@ docker compose pull && docker compose up -d
 git clone https://github.com/madrays/trackferry.git && cd trackferry
 ```
 
-修改 `compose.yaml` 并准备好 `data` 后执行：
+修改 `compose.yaml` 后执行：
 
 ```sh
 docker compose -f compose.yaml -f compose.build.yaml up -d --build

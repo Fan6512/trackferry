@@ -1,6 +1,5 @@
-# TrackFerry 部署文件。改好标着【改】的地方，然后依次执行：
+# TrackFerry 部署文件。改好标着【改】的地方，然后执行：
 #
-#   mkdir -p data && sudo chown -R 10001:10001 data   # 只在第一次做，把 data 交给容器的身份
 #   docker compose up -d
 #   docker compose logs trackferry                    # 最后一段是首次登录用的初始化码
 #
@@ -28,6 +27,10 @@ services:
       TRACKFERRY_TAKEOVER: "*"
       # 每天去 GitHub 看有没有新版本，不会自己安装。不需要就改成 "off"
       TRACKFERRY_UPDATE_CHECK: "on"
+      # 程序用哪个普通身份运行，data 会在启动时自动改成它的。一般不用改；
+      # 想让 NAS 上的某个用户能看 data，就填那个用户 id -u 和 id -g 的结果
+      # PUID: "1000"
+      # PGID: "1001"
 
     volumes:
       # 数据库、登录凭据和设置都在这里。升级、重建容器都不会丢，备份也只需要备份它
@@ -35,16 +38,11 @@ services:
       # 可选：不用飞牛音乐时，只读挂载一个音乐文件夹当曲库
       # - /vol1/1000/Music:/music:ro
 
-    # 容器里的程序用哪个身份运行，格式是“用户号:组号”。
-    # 10001 是专门给 TrackFerry 留的普通身份：不是 root，也不对应 NAS 上任何真实用户，
-    # 万一程序出问题，也动不了 NAS 上别人的文件。它不需要在 NAS 上创建。
-    # 所以要先执行开头那条 chown，让它能写入 ./data。
-    # 想换成自己的身份：把这里改成 id -u 和 id -g 的结果，并对 data 执行同样数字的 chown。
-    user: "10001:10001"
-
-    # 安全限制，保持不动：容器内文件只读、去掉所有系统特权、不允许再提升权限
+    # 安全限制，保持不动：容器内文件只读、不允许提升权限。
+    # 下面四项特权只在启动的一瞬间用：把 data 交给普通身份，再切换成它。之后程序不是 root，也没有任何特权
     read_only: true
     cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
 
     # 停止时留出时间，把音箱音量恢复好

@@ -19,17 +19,13 @@ TRACKFERRY_URL: "http://192.168.1.10:18561"
 
 换成这台 NAS 的局域网地址。音箱自己来这个地址取歌，所以不能写 `localhost`、`127.0.0.1`，也不要写只有外网能用的域名。
 
-## 第二步：准备数据目录
+## 第二步：数据目录
 
-在 `compose.yaml` 所在目录执行：
+不用准备。数据放在 `compose.yaml` 同级的 `data`，第一次启动会自动建好并设好权限。
 
-```sh
-mkdir -p data && sudo chown -R 10001:10001 data
-```
+程序不以 root 运行：容器启动时把 `data` 交给一个普通身份（默认 `10001`，不对应 NAS 上的真实用户），随即切换成它，特权也一并放弃。只改 `data`，不碰音乐目录。
 
-`10001:10001` 是“用户号:组号”，容器里的程序用这个身份运行。它不是 root，一般也不对应 NAS 上的真实用户，不需要创建。这样程序即使出问题，也碰不到其他用户的文件。所以 `data` 要先交给它，否则写不进去。
-
-想用自己的身份：把 `compose.yaml` 里的 `user` 改成 `id -u` 和 `id -g` 的结果，并对 `data` 用同样的数字执行 `chown`。
+想让 NAS 上的某个用户能直接查看 `data`，在 `compose.yaml` 里把 `PUID`、`PGID` 填成那个用户 `id -u` 和 `id -g` 的结果，再 `docker compose up -d`。
 
 ## 第三步：启动
 
@@ -104,7 +100,7 @@ sudo tar czf trackferry-backup.tar.gz data compose.yaml
 docker compose start
 ```
 
-备份里有登录凭据，不要发给别人。恢复时解压到新目录，重新执行第二步的 `chown` 再启动。
+备份里有登录凭据，不要发给别人。恢复时解压到新目录再启动，权限会自动处理。
 
 ## 更新与退回
 
@@ -153,7 +149,10 @@ docker compose -f compose.bridge.yaml up -d
 ## 常见问题
 
 **启动后反复重启，日志写“数据目录不可写”**
-Docker 自动建的 `data` 属于 root。执行第二步的 `chown`，再 `docker compose restart`。
+`compose.yaml` 里有 `user` 一行时（1.1.0 及以前的写法），权限要自己处理。换成最新的 `compose.yaml` 和镜像，或者在 `compose.yaml` 所在目录执行 `sudo chown -R 10001:10001 data`，再 `docker compose restart`。没有 `user` 仍然这样，说明 `data` 所在的共享或磁盘不允许改权限，换到 NAS 本机的存储空间。不要用 `chmod 777`，里面有登录凭据。
+
+**日志写“不能切换到普通身份”**
+`compose.yaml` 缺少 `cap_add` 一行，照最新的 `compose.yaml` 补上。
 
 **管理页打不开**
 先在 NAS 上执行 `curl http://127.0.0.1:18561/healthz/live`。能通，是防火墙没放行，见第四步；不通，看日志。

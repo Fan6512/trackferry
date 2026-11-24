@@ -29,6 +29,7 @@ import (
 	"trackferry/internal/logx"
 	"trackferry/internal/observe"
 	"trackferry/internal/online"
+	"trackferry/internal/privs"
 	"trackferry/internal/relay"
 	"trackferry/internal/routing"
 	"trackferry/internal/store"
@@ -50,6 +51,11 @@ func main() {
 	cmd := "serve"
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
+	}
+	// Before anything in the data folder is read, let alone run.
+	if err := drop(cmd); err != nil {
+		fmt.Fprintln(os.Stderr, "trackferry:", err)
+		os.Exit(1)
 	}
 	var err error
 	switch cmd {
@@ -79,6 +85,29 @@ func main() {
 		fmt.Fprintln(os.Stderr, "trackferry:", err)
 		os.Exit(1)
 	}
+}
+
+// dataMount is where the image keeps its data; only this and the relay's volume are ever
+// given away, whatever a configuration file says.
+const dataMount = "/data"
+
+// drop leaves root behind, after handing over the folders the command is the owner of.
+func drop(cmd string) error {
+	var dirs []string
+	switch cmd {
+	case "serve":
+		dirs = []string{dataMount, filepath.Dir(relay.Socket)}
+	case "relay":
+		dirs = []string{filepath.Dir(relay.Socket)}
+	}
+	err := privs.Drop(dirs...)
+	if errors.Is(err, privs.ErrCannotDrop) && cmd != "healthcheck" {
+		logx.Banner(os.Stderr, "启动不了：不能切换到普通身份",
+			logx.Row{Name: "原因", Value: err.Error()},
+			logx.Row{Name: "解决", Value: "compose.yaml 里加 cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]"},
+			logx.Row{Name: "或者", Value: "用 user 指定身份，并把 data 的属主改成它"})
+	}
+	return err
 }
 
 // errRestart asks main to start again, into an update.
@@ -112,8 +141,8 @@ func newLog() *slog.Logger {
 	return logx.New(os.Stdout, os.Getenv("TRACKFERRY_LOG"), os.Getenv("TRACKFERRY_DEBUG") != "")
 }
 
-// writable explains the one thing that goes wrong on a first start: the folder Docker made
-// belongs to root.
+// writable explains a data folder that the identity we run as cannot write, and that could
+// not be given to it: the container was told who to be, or the mount refuses.
 func writable(dir string) error {
 	d := fscheck.CheckData(dir)
 	if d.Writable {
@@ -123,7 +152,8 @@ func writable(dir string) error {
 		logx.Row{Name: "目录", Value: dir + "（compose.yaml 同级的 data）"},
 		logx.Row{Name: "原因", Value: d.Error},
 		logx.Row{Name: "解决", Value: fmt.Sprintf("在 compose.yaml 所在目录执行 sudo chown -R %d:%d data", os.Getuid(), os.Getgid())},
-		logx.Row{Name: "然后", Value: "docker compose restart"})
+		logx.Row{Name: "然后", Value: "docker compose restart"},
+		logx.Row{Name: "或者", Value: "换成最新的 compose.yaml（没有 user 一行），启动时会自动处理"})
 	return errors.New("data directory is not writable: " + d.Error)
 }
 

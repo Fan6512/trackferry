@@ -25,11 +25,14 @@ services:
     environment:
       # 飞牛的 HTTPS 端口，改过才需要动
       TRACKFERRY_RELAY_TARGET: "127.0.0.1:5667"
+      # 主服务设了 PUID、PGID 时，这里要一样，才能共用通道
+      # PUID: "1000"
+      # PGID: "1001"
     volumes:
       - relay:/run/trackferry
-    user: "10001:10001" # 与主服务同一个身份，才能共用通道
     read_only: true
     cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 64m
     healthcheck: { disable: true }

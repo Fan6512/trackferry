@@ -13,6 +13,7 @@
 | `TRACKFERRY_DEBUG` | 无 | 关 | 任意值打开调试日志，包含每个页面请求 |
 | `TRACKFERRY_CONFIG` | 无 | `/data/config.yaml` | 配置文件位置，可以不存在 |
 | `TRACKFERRY_RELAY_TARGET` | 无 | `127.0.0.1:5667` | 只用于备选的 `relay` 容器 |
+| `PUID`、`PGID` | 无 | `10001` | 程序运行的普通身份，启动时 `data` 会改成它的；不能是 0。`compose.yaml` 写了 `user` 时不起作用 |
 | `TZ` | 无 | `Asia/Shanghai` | 时区 |
 | 无 | `data_dir` | `/data` | 容器内数据目录 |
 | 无 | `music_dir` | `/music` | 容器内音乐目录，可选 |

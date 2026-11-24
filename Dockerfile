@@ -29,7 +29,7 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /out/trackferry /trackferry
 # The shared volume takes this directory's owner.
 COPY --from=build --chown=10001:10001 /out/run /run/trackferry
-USER 10001:10001
+# Starts as root only to hand /data over, then becomes PUID:PGID (10001 unless set).
 ENV TRACKFERRY_CONFIG=/data/config.yaml TZ=Asia/Shanghai
 EXPOSE 18561
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/trackferry", "healthcheck"]
