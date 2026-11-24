@@ -140,11 +140,18 @@ func TestNextPreviousAndANewRequestWhileAListPlays(t *testing.T) {
 	}
 	d.Router = &fakeDecider{found: true}
 	say("播放晴天", intent.KindSong, "")
-	if d.queued("d1") != nil {
+	if now := d.queued("d1"); now == q || now == nil || !now.solo {
 		t.Fatal("still there")
 	}
+	d.Random = func(int) []int64 { return []int64{8} }
 	n := len(sp.started)
-	say("下一首了", intent.KindControl, "next") // Xiao AI's
+	say("下一首了", intent.KindControl, "next") // a single song of ours: another one
+	if len(sp.started) != n+1 || sp.last().Kind != "command" {
+		t.Fatal("did not move on from the single song")
+	}
+	sp.last().Ended(EndOther)
+	n = len(sp.started)
+	say("再下一首", intent.KindControl, "next") // Xiao AI's
 	if len(sp.started) != n {
 		t.Fatal("no list, yet it played")
 	}

@@ -1,14 +1,18 @@
 package online
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNeteasePlaysWhatTheAccountMay(t *testing.T) {
@@ -122,5 +126,65 @@ func TestNeteasePlaysWhatTheAccountMay(t *testing.T) {
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatal("still there")
+	}
+}
+
+func TestNeteaseSignedInAsksAsTheDesktopClientAndThenAsAStranger(t *testing.T) {
+	frame := make([]byte, 417) // MPEG1 layer 3, 128 kbit/s, 44.1 kHz
+	copy(frame, []byte{0xff, 0xfb, 0x90, 0})
+	mp3 := bytes.Repeat(frame, 7000)
+	var signed, old, stranger string
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		answer := ""
+		switch {
+		case r.URL.Path == "/good":
+			http.ServeContent(w, r, "a.mp3", time.Time{}, bytes.NewReader(mp3))
+			return
+		case r.URL.Path == "/bad":
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		case r.Header.Get("Cookie") == "":
+			answer = stranger
+		case !strings.Contains(r.Header.Get("Cookie"), "os=pc"):
+			t.Error("asked as a browser")
+		case strings.HasSuffix(r.URL.Path, "/v1"):
+			answer = signed
+		default:
+			answer = old
+		}
+		asked = append(asked, r.URL.Path)
+		w.Write([]byte(`{"code":200,"data":[` + strings.ReplaceAll(answer, "BASE", "http://"+r.Host) + `]}`))
+	}))
+	defer srv.Close()
+	n := &Netease{Client: srv.Client(), Base: srv.URL, ses: neteaseSession{Cookie: "MUSIC_U=x"}}
+	s := New(slog.New(slog.NewTextHandler(io.Discard, nil)), srv.Client(), n)
+	const good, bad = `{"url":"BASE/good","code":200,"type":"mp3"}`, `{"url":"BASE/bad","code":200,"type":"mp3"}`
+	const m4a, none = `{"url":"BASE/good","code":200,"type":"m4a"}`, `{"url":null,"code":404}`
+	const denied, trial = `{"url":null,"code":-110}`, `{"url":"BASE/good","code":200,"freeTrialInfo":{"end":30}}`
+	for name, c := range map[string]struct {
+		signed, old, stranger string
+		calls                 int
+		err                   error
+	}{
+		"signed in": {good, bad, bad, 1, nil},
+		"older":     {m4a, good, bad, 2, nil},
+		"refused":   {bad, good, good, 2, nil}, // the CDN's 403
+		"denied":    {denied, bad, good, 2, nil},
+		"empty":     {"", none, good, 3, nil},
+		"nowhere":   {m4a, none, trial, 3, ErrNoAudio},
+		"no right":  {denied, good, denied, 2, ErrRestricted},
+		"trial":     {trial, good, good, 1, ErrTrial},
+		"dead":      {bad, bad, bad, 2, httpError(403)},
+	} {
+		asked, signed, old, stranger = nil, c.signed, c.old, c.stranger
+		_, err := s.resolveOne(context.Background(), n, Candidate{ID: "1", Duration: 180 * time.Second})
+		if !errors.Is(err, c.err) || len(asked) != c.calls {
+			t.Errorf("%s: %v %v", name, err, asked)
+		}
+		if err != nil && strings.Contains(reason(err), "/good") {
+			t.Error(reason(err))
+		}
 	}
 }

@@ -140,6 +140,8 @@ TrackFerry 可以把每台音箱的真实状态实时给 Home Assistant：在放
 | action | 作用 |
 | --- | --- |
 | `play` · `pause` · `stop` | 播放、暂停、停止。暂停或停止后，歌不会自己续上 |
+| `next` · `previous` | 下一首、上一首。TrackFerry 没有在放歌时返回 409 |
+| `mode` | 另带 `"mode"`：`loop` 顺序循环、`shuffle` 随机、`one` 单曲循环 |
 | `volume` | 0 到 100。正在短暂静音时，恢复到这个音量 |
 | `wake` | 唤醒小爱，等你说话；只有 `controls` 里有 `wake` 的型号支持 |
 

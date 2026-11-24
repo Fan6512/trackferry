@@ -45,7 +45,7 @@ func Heard(query string, in intent.Intent) string {
 				what += "“" + in.Title + "”"
 			}
 		}
-		return strings.Join(append(parts, "随机连播"+what), "，")
+		return strings.Join(append(parts, "连着放"+what), "，")
 	case intent.KindFavorite:
 		switch in.Control {
 		case intent.ListAdd:

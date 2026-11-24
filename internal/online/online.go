@@ -227,6 +227,17 @@ func describe(err error) string {
 	return "平台返回了看不懂的内容"
 }
 
+// reason is describe with what the platform's answer looked like, for the log. Other errors
+// may carry addresses.
+func reason(err error) string {
+	for _, k := range []error{ErrRestricted, ErrTrial, ErrNoAudio} {
+		if errors.Is(err, k) {
+			return err.Error()
+		}
+	}
+	return describe(err)
+}
+
 type progressKey struct{}
 
 // WithProgress has f called with every change of a platform's outcome during Find, from
@@ -476,6 +487,7 @@ func (s *Service) resolve(ctx context.Context, e *entry, hs []hit) (*Found, stri
 		switch {
 		case errors.Is(err, ErrRestricted), errors.Is(err, ErrTrial), errors.Is(err, ErrNoAudio):
 			state = StateRestricted
+			s.log.Info("音源　跳过一首", "音源", e.src.Name(), "原因", reason(err))
 		case detail == "超时":
 			state = StateTimeout
 			s.record(e, searchTimeout, err)
@@ -506,6 +518,30 @@ func (s *Service) fault(err *error) {
 }
 
 func (s *Service) resolveOne(ctx context.Context, src Source, c Candidate) (Stream, error) {
+	st, err := s.tryOne(ctx, src, c)
+	free, ok := src.(interface {
+		ResolveFree(context.Context, Candidate) (string, error)
+	})
+	var he httpError
+	if !ok || ctx.Err() != nil || !errors.Is(err, ErrNoAudio) && !errors.Is(err, ErrRestricted) && !errors.As(err, &he) {
+		return st, err
+	}
+	again, aerr := s.tryOne(ctx, freely{src, free.ResolveFree}, c)
+	if aerr != nil {
+		return Stream{}, err
+	}
+	return again, nil
+}
+
+// freely is a source asked without its session.
+type freely struct {
+	Source
+	resolve func(context.Context, Candidate) (string, error)
+}
+
+func (f freely) Resolve(ctx context.Context, c Candidate) (string, error) { return f.resolve(ctx, c) }
+
+func (s *Service) tryOne(ctx context.Context, src Source, c Candidate) (Stream, error) {
 	u, err := s.address(ctx, src, c)
 	if err != nil {
 		return Stream{}, err
@@ -535,7 +571,7 @@ func (s *Service) check(ctx context.Context, u string, want time.Duration) (Stre
 	}
 	d := audio.MP3Duration(body, total-off)
 	if d == 0 {
-		return Stream{}, ErrNoAudio
+		return Stream{}, fmt.Errorf("%w（不是 MP3，类型 %.24q，%d 字节）", ErrNoAudio, ctype, total)
 	}
 	if d < shortestSong && (want == 0 || want >= shortestSong) || want > 0 && float64(d) < minFullShare*float64(want) {
 		return Stream{}, ErrTrial
@@ -556,8 +592,11 @@ func (s *Service) fetch(ctx context.Context, u string, from int64) (b []byte, to
 	}
 	defer resp.Body.Close()
 	ctype = resp.Header.Get("Content-Type")
+	if resp.StatusCode >= 400 {
+		return nil, 0, "", httpError(resp.StatusCode)
+	}
 	if strings.HasPrefix(ctype, "text/") || strings.Contains(ctype, "json") {
-		return nil, 0, "", ErrNoAudio
+		return nil, 0, "", fmt.Errorf("%w（给的是网页，HTTP %d）", ErrNoAudio, resp.StatusCode)
 	}
 	switch resp.StatusCode {
 	case http.StatusPartialContent:
@@ -774,6 +813,7 @@ func (s *Service) Take(ctx context.Context, key string) (*Found, error) {
 		defer cancel()
 		st, err := s.resolveOne(ctx, e.src, c)
 		if err != nil {
+			s.log.Warn("音源　点的歌放不了", "音源", c.Source, "原因", reason(err))
 			return nil, errors.New(describe(err))
 		}
 		return &Found{Candidate: c, Stream: st}, nil

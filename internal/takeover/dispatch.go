@@ -349,7 +349,7 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		if ok && d.queued(c.DeviceID) == q {
 			rt.Basis = nil
 			rt.Because("听成", "%s", routing.Heard(c.Query, in))
-			rt.Because("选它", "%s正在连播", q.list)
+			rt.Because("选它", "%s", skipped(q))
 			rt.Because("出声", "%s", act())
 			d.Remember(c.DeviceID, rt.Title, rt.Artist, rt.TrackID)
 			d.Store.SetCommandRoute(bg, c.ID, rt.JSON())
@@ -462,9 +462,13 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 	}
 	req := Request{DeviceID: c.DeviceID, Hardware: hardware, Kind: "command", CommandID: c.ID, UpstreamMS: c.UpstreamMS, Track: t, Trace: tr, Answer: utf8.RuneCountInString(c.Answer)}
 	if ids := rt.Queue(); len(ids) > 0 && d.Next != nil {
-		req.Ended = d.follow(&queue{dev: c.DeviceID, hardware: hardware, list: rt.List, ids: ids})
+		q := &queue{dev: c.DeviceID, hardware: hardware, list: rt.List, ids: ids, order: rt.Order()}
+		if at := slices.Index(q.order, rt.TrackID); at >= 0 && d.PlayMode(bg, c.DeviceID) == ModeLoop {
+			q.ids, q.pos = slices.Clone(q.order), at
+		}
+		req.Ended = d.follow(q)
 	} else {
-		req.Ended = d.After(c.DeviceID, hardware, rt.TrackID, false)
+		req.Ended = d.After(c.DeviceID, hardware, rt.TrackID, rt, false)
 	}
 	if _, err := d.Engine.Start(ctx, req); err != nil {
 		d.Drop(c.DeviceID)

@@ -30,6 +30,9 @@ const listWait = 8 * time.Second
 // Queue is the songs to play one after another, the chosen one first.
 func (r *Route) Queue() []int64 { return r.queue }
 
+// Order is the same list as it stands, not shuffled.
+func (r *Route) Order() []int64 { return r.order }
+
 // playlist finds a playlist by what was said. The error is for people.
 func (r *Router) playlist(ctx context.Context, name string) (feiniu.Playlist, error) {
 	all, err := r.Lists.Playlists(ctx)
@@ -148,6 +151,7 @@ func (r *Router) list(ctx context.Context, rt *Route, in intent.Intent) {
 		rt.Reason = name + "里的歌还没有同步到曲库"
 		return
 	}
+	rt.order = append([]int64{}, ids...)
 	rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
 	for i, id := range ids[:min(5, len(ids))] {
 		m, ok := r.Track(id)
@@ -156,7 +160,7 @@ func (r *Router) list(ctx context.Context, rt *Route, in intent.Intent) {
 		}
 		rt.take(m)
 		rt.List, rt.queue = name, append(append([]int64{}, ids[i:]...), ids[:i]...)
-		l.State, l.Detail = online.StateHit, fmt.Sprintf("%s，%d 首随机连播", name, len(ids))
+		l.State, l.Detail = online.StateHit, fmt.Sprintf("%s，%d 首连着放", name, len(ids))
 		if n := total - len(ids); n > 0 {
 			l.Detail += fmt.Sprintf("（另有 %d 首放不了或还没同步）", n)
 		}

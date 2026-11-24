@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -202,30 +203,61 @@ func (n *Netease) Search(ctx context.Context, q string) ([]Candidate, error) {
 	return out, nil
 }
 
-// Resolve implements Source.
+const (
+	neteaseURL    = "/api/song/enhance/player/url/v1"
+	neteaseOldURL = "/api/song/enhance/player/url"
+)
+
+// Resolve implements Source. A browser's session alone gets addresses that the CDN answers
+// with 403 and a web page; as the desktop client's the same session gets good ones.
 func (n *Netease) Resolve(ctx context.Context, c Candidate) (string, error) {
+	cookie := n.cookie()
+	if cookie != "" {
+		cookie += "; os=pc"
+	}
+	u, err := n.songURL(ctx, neteaseURL, cookie, c)
+	if errors.Is(err, ErrNoAudio) {
+		if u, err := n.songURL(ctx, neteaseOldURL, cookie, c); err == nil {
+			return u, nil
+		}
+	}
+	return u, err
+}
+
+// ResolveFree asks as somebody who is not signed in: what everybody may hear needs no session.
+func (n *Netease) ResolveFree(ctx context.Context, c Candidate) (string, error) {
+	if n.cookie() == "" {
+		return "", ErrNoAudio
+	}
+	return n.songURL(ctx, neteaseURL, "", c)
+}
+
+func (n *Netease) songURL(ctx context.Context, path, cookie string, c Candidate) (string, error) {
 	var r struct {
 		Data []struct {
 			URL   string          `json:"url"`
 			Code  int             `json:"code"`
+			Type  string          `json:"type"`
 			Trial json.RawMessage `json:"freeTrialInfo"`
 		} `json:"data"`
 	}
-	form := url.Values{"ids": {"[" + c.ID + "]"}, "level": {"exhigh"}, "encodeType": {"mp3"}}
-	if _, err := n.post(ctx, "/api/song/enhance/player/url/v1", form, n.cookie(), &r); err != nil {
+	form := url.Values{"ids": {"[" + c.ID + "]"}, "level": {"exhigh"}, "encodeType": {"mp3"}, "br": {"320000"}}
+	if _, err := n.post(ctx, path, form, cookie, &r); err != nil {
 		return "", err
 	}
 	if len(r.Data) == 0 {
-		return "", ErrNoAudio
+		return "", fmt.Errorf("%w（没有数据）", ErrNoAudio)
 	}
 	d := r.Data[0]
 	switch {
 	case len(d.Trial) > 0 && string(d.Trial) != "null":
 		return "", ErrTrial
 	case d.URL == "" && d.Code == 404:
-		return "", ErrNoAudio
+		return "", fmt.Errorf("%w（代码 404）", ErrNoAudio)
 	case d.URL == "":
-		return "", ErrRestricted
+		return "", fmt.Errorf("%w（代码 %d）", ErrRestricted, d.Code)
+	case d.Type != "" && !strings.EqualFold(d.Type, "mp3"):
+		return "", fmt.Errorf("%w（格式 %.8q）", ErrNoAudio, d.Type)
 	}
 	return d.URL, nil
 }

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"trackferry/internal/live"
@@ -32,6 +33,137 @@ type queue struct {
 	fails               int  // songs in a row that did not play
 	web                 bool // sent from the page, so watching is enough
 	until               time.Time
+
+	order []int64        // the list as it was given
+	first *routing.Route // song 0: one that is not in the library
+	solo  bool           // a single song: nothing follows it on its own
+	move  sync.Mutex     // one move at a time
+}
+
+// Modes of a speaker: what comes after a song.
+const (
+	ModeLoop    = "loop"    // the list in its order, over and over
+	ModeShuffle = "shuffle" // in random order
+	ModeOne     = "one"     // the same song again
+)
+
+const settingMode = "play.mode."
+
+// PlayMode is how a speaker goes through a list.
+func (d *Dispatcher) PlayMode(ctx context.Context, dev string) string {
+	if m, _ := d.Store.Setting(ctx, settingMode+dev); m == ModeLoop || m == ModeOne {
+		return m
+	}
+	return ModeShuffle
+}
+
+// SetPlayMode changes it. The song that plays goes on.
+func (d *Dispatcher) SetPlayMode(ctx context.Context, dev, mode string) error {
+	if err := d.Store.SetSetting(ctx, settingMode+dev, mode); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	q := d.queues[dev]
+	if q == nil || mode == ModeOne {
+		return nil
+	}
+	cur, at := q.ids[q.pos], slices.Index(q.order, q.ids[q.pos])
+	q.ids, q.pos = slices.Clone(q.order), max(0, at)
+	if mode == ModeShuffle {
+		q.ids = slices.Delete(q.ids, q.pos, q.pos+1)
+		rand.Shuffle(len(q.ids), func(i, j int) { q.ids[i], q.ids[j] = q.ids[j], q.ids[i] })
+		q.ids, q.pos = slices.Insert(q.ids, 0, cur), 0
+	}
+	return nil
+}
+
+// Queue is what a page may know of the list on a speaker.
+type Queue struct {
+	List  string `json:"list"` // empty: a single song
+	At    int    `json:"at"`
+	Total int    `json:"total"`
+}
+
+// Queue tells what plays on a speaker; nil when no song of ours does.
+func (d *Dispatcher) Queue(dev string) *Queue {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	q := d.queues[dev]
+	switch {
+	case q == nil:
+		return nil
+	case q.solo:
+		return &Queue{At: 1, Total: 1}
+	}
+	return &Queue{List: q.list, At: q.pos + 1, Total: len(q.ids)}
+}
+
+// Why there is no other song.
+var (
+	ErrNoQueue = errors.New("没有正在放的歌")
+	ErrNoSong  = errors.New("后面没有能放的歌")
+)
+
+// Skip plays the next song (by 1) or the one before (by -1), as a button asks for.
+func (d *Dispatcher) Skip(ctx context.Context, dev string, by int) error {
+	q := d.queued(dev)
+	if q == nil {
+		return ErrNoQueue
+	}
+	q.move.Lock()
+	defer q.move.Unlock()
+	if d.queued(dev) != q {
+		return ErrNoQueue
+	}
+	rt, ok := d.step(q, by)
+	if !ok {
+		return ErrNoSong
+	}
+	d.lasts(q) // somebody is listening
+	return d.play(ctx, q, rt, false)
+}
+
+// song is the route of one of a queue's songs.
+func (d *Dispatcher) song(q *queue, id int64) (*routing.Route, bool) {
+	if id != 0 {
+		return d.Next(id, q.list)
+	}
+	if q.first == nil {
+		return nil, false
+	}
+	rt := *q.first
+	return &rt, true
+}
+
+// more draws songs to come after a single one that was skipped.
+func (d *Dispatcher) more(q *queue) {
+	d.mu.Lock()
+	dry := q.solo && q.pos == len(q.ids)-1
+	d.mu.Unlock()
+	if !dry || d.Random == nil {
+		return
+	}
+	ids := d.Random(afterwards)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur := q.ids[q.pos]
+	for _, id := range ids {
+		if id != cur {
+			q.ids, q.order = append(q.ids, id), append(q.order, id)
+		}
+	}
+}
+
+// lasts says until when songs follow on their own.
+func (d *Dispatcher) lasts(q *queue) {
+	t := time.Time{}
+	if h := LoadPrefs(context.Background(), d.Store).Hours; h > 0 {
+		t = time.Now().Add(time.Duration(h) * time.Hour)
+	}
+	d.mu.Lock()
+	q.until = t
+	d.mu.Unlock()
 }
 
 // maxFails ends a queue whose songs do not play.
@@ -105,9 +237,10 @@ func SavePrefs(ctx context.Context, st *store.Store, p Prefs) error {
 // follow has ids play one after another on a speaker, the first of which is about to be
 // started, and returns what the end of that one calls.
 func (d *Dispatcher) follow(q *queue) func(End) {
-	if h := LoadPrefs(context.Background(), d.Store).Hours; h > 0 {
-		q.until = time.Now().Add(time.Duration(h) * time.Hour)
+	if q.order == nil {
+		q.order = slices.Clone(q.ids)
 	}
+	d.lasts(q)
 	d.enqueue(q)
 	return d.turn(q)
 }
@@ -115,34 +248,40 @@ func (d *Dispatcher) follow(q *queue) func(End) {
 // afterwards is how many random songs are drawn to follow a single one.
 const afterwards = 500
 
-// After has random songs follow a single one, if that is wanted. track is 0 for a song that
-// is not in the library.
-func (d *Dispatcher) After(dev, hardware string, track int64, web bool) func(End) {
-	if d.Random == nil || d.Next == nil || !LoadPrefs(context.Background(), d.Store).After {
+// After looks after a single song: random ones follow it if that is wanted, it repeats if the
+// speaker is set to that, and it can be skipped. rt is for a song that is not in the library;
+// its track is 0.
+func (d *Dispatcher) After(dev, hardware string, track int64, rt *routing.Route, web bool) func(End) {
+	if d.Next == nil {
 		return nil
 	}
-	ids := []int64{track}
-	for _, id := range d.Random(afterwards) {
-		if id != track {
-			ids = append(ids, id)
+	q := &queue{dev: dev, hardware: hardware, ids: []int64{track}, web: web, solo: true, first: rt}
+	if d.Random != nil && LoadPrefs(context.Background(), d.Store).After {
+		for _, id := range d.Random(afterwards) {
+			if id != track {
+				q.ids = append(q.ids, id)
+			}
+		}
+		if len(q.ids) > 1 {
+			q.list, q.solo = "接着随机放", false
 		}
 	}
-	if len(ids) < 2 {
-		return nil
-	}
-	return d.follow(&queue{dev: dev, hardware: hardware, list: "接着随机放", ids: ids, web: web})
+	return d.follow(q)
 }
 
-// PlayList plays a list on a speaker, in random order, until something else is asked for.
+// PlayList plays a list on a speaker until something else is asked for.
 func (d *Dispatcher) PlayList(ctx context.Context, dev store.Device, list string, ids []int64) (store.TakeoverRun, error) {
+	order := slices.Clone(ids)
 	ids = slices.Clone(ids)
-	rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+	if d.PlayMode(ctx, dev.DeviceID) != ModeLoop {
+		rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+	}
 	for i, id := range ids[:min(10, len(ids))] {
 		rt, ok := d.Next(id, list)
 		if !ok {
 			continue
 		}
-		q := &queue{dev: dev.DeviceID, hardware: dev.Hardware, list: list, ids: append(ids[i:len(ids):len(ids)], ids[:i]...), web: true}
+		q := &queue{dev: dev.DeviceID, hardware: dev.Hardware, list: list, ids: ids, pos: i, order: order, web: true}
 		return d.push(ctx, dev, rt, func() func(End) { return d.follow(q) })
 	}
 	return store.TakeoverRun{}, errors.New(list + "里的歌暂时读不到")
@@ -150,7 +289,7 @@ func (d *Dispatcher) PlayList(ctx context.Context, dev store.Device, list string
 
 // Push plays one song that was picked by hand.
 func (d *Dispatcher) Push(ctx context.Context, dev store.Device, rt *routing.Route) (store.TakeoverRun, error) {
-	return d.push(ctx, dev, rt, func() func(End) { return d.After(dev.DeviceID, dev.Hardware, rt.TrackID, true) })
+	return d.push(ctx, dev, rt, func() func(End) { return d.After(dev.DeviceID, dev.Hardware, rt.TrackID, rt, true) })
 }
 
 func (d *Dispatcher) push(ctx context.Context, dev store.Device, rt *routing.Route, ended func() func(End)) (store.TakeoverRun, error) {
@@ -205,10 +344,14 @@ func (d *Dispatcher) turn(q *queue) func(End) {
 // new order, when it is through.
 func (d *Dispatcher) step(q *queue, by int) (*routing.Route, bool) {
 	back := by < 0
+	if !back {
+		d.more(q)
+	}
+	shuffled := d.PlayMode(context.Background(), q.dev) != ModeLoop
 	d.mu.Lock()
-	was := q.ids[q.pos]
+	was, n := q.ids[q.pos], len(q.ids)
 	d.mu.Unlock()
-	for i := range min(40, 2*len(q.ids)) {
+	for i := range min(40, 2*n) {
 		d.mu.Lock()
 		q.pos += by
 		if q.pos < 0 {
@@ -216,15 +359,17 @@ func (d *Dispatcher) step(q *queue, by int) (*routing.Route, bool) {
 			by = 1 // if the first song cannot be read, the one after it
 		}
 		if q.pos >= len(q.ids) {
-			rand.Shuffle(len(q.ids), func(i, j int) { q.ids[i], q.ids[j] = q.ids[j], q.ids[i] })
+			if shuffled {
+				rand.Shuffle(len(q.ids), func(i, j int) { q.ids[i], q.ids[j] = q.ids[j], q.ids[i] })
+			}
 			q.pos = 0
 		}
 		id := q.ids[q.pos]
 		d.mu.Unlock()
-		if id == was && !back && i < len(q.ids)-1 {
+		if id == was && !back && i < n-1 {
 			continue // not twice in a row, unless it is all there is
 		}
-		if rt, ok := d.Next(id, q.list); ok {
+		if rt, ok := d.song(q, id); ok {
 			return rt, true
 		}
 	}
@@ -234,12 +379,17 @@ func (d *Dispatcher) step(q *queue, by int) (*routing.Route, bool) {
 // advance plays the next song of a queue after turn n ended.
 func (d *Dispatcher) advance(q *queue, n int) {
 	ctx := context.Background()
+	q.move.Lock()
+	defer q.move.Unlock()
+	d.mu.Lock()
+	moved := d.queues[q.dev] != q || q.turn != n
+	id, until, fails := q.ids[q.pos], q.until, q.fails
+	d.mu.Unlock()
+	if moved {
+		return
+	}
 	end := func(why string) {
-		d.mu.Lock()
-		if d.queues[q.dev] == q && q.turn == n {
-			delete(d.queues, q.dev)
-		}
-		d.mu.Unlock()
+		d.finished(q, n)
 		d.Log.Info("连播　结束", "说明", why)
 	}
 	dev, err := d.Store.Device(ctx, q.dev)
@@ -247,33 +397,65 @@ func (d *Dispatcher) advance(q *queue, n int) {
 		end("音箱不再接管")
 		return
 	}
-	if !q.until.IsZero() && time.Now().After(q.until) {
+	if !until.IsZero() && time.Now().After(until) {
 		end("放够了设定的最长时间")
 		return
 	}
-	rt, ok := d.step(q, 1)
+	var rt *routing.Route
+	ok := false
+	if d.PlayMode(ctx, q.dev) == ModeOne && (q.solo || fails == 0) {
+		rt, ok = d.song(q, id)
+	}
+	if !ok && q.solo {
+		d.finished(q, n)
+		return
+	}
+	if !ok {
+		rt, ok = d.step(q, 1)
+	}
 	if !ok {
 		end("后面的歌暂时读不到")
 		return
 	}
+	if err := d.play(ctx, q, rt, true); err != nil {
+		end(err.Error())
+	}
+}
+
+// finished ends a queue, unless it has moved on.
+func (d *Dispatcher) finished(q *queue, n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.queues[q.dev] == q && q.turn == n {
+		delete(d.queues, q.dev)
+	}
+}
+
+// play starts a song of a queue. over: the one before it has ended, so nothing needs silencing.
+func (d *Dispatcher) play(ctx context.Context, q *queue, rt *routing.Route, over bool) error {
 	tr := d.Live.Begin(live.Flow{Kind: "push", DeviceID: q.dev, Device: d.name(q.dev), Said: rt.Label()})
 	t, _, err := d.TrackOf(rt, tr)
 	if err != nil {
 		tr.Done("准备音频失败")
-		end("准备音频失败：" + err.Error())
-		return
+		return errors.New("准备音频失败：" + err.Error())
 	}
 	if d.queued(q.dev) != q {
 		tr.Done("有了更新的口令")
-		return
+		return ErrNoQueue
 	}
 	ended := d.turn(q)
 	d.Remember(q.dev, rt.Title, rt.Artist, rt.TrackID)
 	song := &store.Song{TrackID: rt.TrackID, Title: rt.Title, Artist: rt.Artist, Album: rt.Album, Cover: rt.Cover, DurationMS: rt.DurationMS, List: q.list}
-	if _, err := d.Engine.Start(ctx, Request{DeviceID: q.dev, Hardware: q.hardware, Kind: "push", Track: t, Song: song, Trace: tr, Follows: true, Ended: ended}); err != nil {
+	if _, err := d.Engine.Start(ctx, Request{DeviceID: q.dev, Hardware: q.hardware, Kind: "push", Track: t, Song: song, Trace: tr, Follows: over, Ended: ended}); err != nil {
+		d.mu.Lock()
+		if d.queues[q.dev] == q {
+			delete(d.queues, q.dev)
+		}
+		d.mu.Unlock()
 		tr.Done("没能开始")
-		end("没能开始：" + err.Error())
+		return errors.New("没能开始：" + err.Error())
 	}
+	return nil
 }
 
 func (d *Dispatcher) name(dev string) string {
@@ -290,6 +472,8 @@ func (d *Dispatcher) skip(q *queue, c store.Command, hardware string, tr *live.T
 		by = -1
 	}
 	start := time.Now()
+	q.move.Lock()
+	defer q.move.Unlock()
 	rt, ok := d.step(q, by)
 	if !ok {
 		return nil, Request{}, false
@@ -347,4 +531,12 @@ func sayable(err error) string {
 		return s
 	}
 	return err.Error()
+}
+
+// skipped says why a song came after "下一首" or "上一首".
+func skipped(q *queue) string {
+	if q.solo {
+		return "放的是单曲，切到别的歌"
+	}
+	return q.list + "正在连播"
 }

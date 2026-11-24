@@ -29,7 +29,7 @@
 | `GET /api/intent` · `POST /api/intent` | 说法示例；解释一句话 |
 | `GET /api/devices` · `POST /api/devices/sync` · `PATCH /api/devices/{id}` | 音箱列表、同步、改模式、别名，或压住小爱的方式 `{"hush":"normal\|strong\|wait"}` |
 | `POST /api/devices/{id}/takeover-test` | 接管测试，会出声 |
-| `GET·POST /api/devices/{id}/control` | 播放状态与音量；控制：`{"action":"play\|pause\|stop\|wake"}` 或 `{"action":"volume","volume":35}`，成功返回 204 |
+| `GET·POST /api/devices/{id}/control` | 播放状态与音量；控制：`{"action":"play\|pause\|stop\|next\|previous\|wake"}`、`{"action":"volume","volume":35}` 或 `{"action":"mode","mode":"loop\|shuffle\|one"}`，成功返回 204；没有歌可切返回 409 |
 | `POST /api/devices/{id}/play` `{"source":"favorites\|playlist\|artist\|album\|online","id":"","name":""}` | 把收藏、歌单、专辑、歌手或一首线上的歌送到音箱；`id` 为歌单、专辑或线上歌曲，`name` 为歌手 |
 | `GET·PUT /api/playing` `{"artist":true,"after":false,"hours":3}` | 连续播放的设置，`hours` 为 0 不限；没写的不变 |
 | `GET /api/takeover/runs?limit=` | 接管经过 |

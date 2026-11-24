@@ -13,21 +13,27 @@ import (
 // control presses a speaker's buttons.
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Action string `json:"action"` // play | pause | stop | volume | wake
+		Action string `json:"action"` // play | pause | stop | next | previous | mode | volume | wake
 		Volume *int   `json:"volume"`
+		Mode   string `json:"mode"` // loop | shuffle | one
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	switch req.Action {
-	case takeover.ControlPlay, takeover.ControlPause, takeover.ControlStop, takeover.ControlWake:
+	case takeover.ControlPlay, takeover.ControlPause, takeover.ControlStop, takeover.ControlWake, takeover.ControlNext, takeover.ControlPrevious:
 	case takeover.ControlVolume:
 		if req.Volume == nil || *req.Volume < 0 || *req.Volume > 100 {
 			writeError(w, http.StatusBadRequest, "bad_volume", "音量要在 0 到 100 之间")
 			return
 		}
+	case takeover.ControlMode:
+		if req.Mode != takeover.ModeLoop && req.Mode != takeover.ModeShuffle && req.Mode != takeover.ModeOne {
+			writeError(w, http.StatusBadRequest, "bad_mode", "mode 只能是 loop、shuffle 或 one")
+			return
+		}
 	default:
-		writeError(w, http.StatusBadRequest, "bad_action", "action 只能是 play、pause、stop、volume 或 wake")
+		writeError(w, http.StatusBadRequest, "bad_action", "action 只能是 play、pause、stop、next、previous、mode、volume 或 wake")
 		return
 	}
 	d, err := s.Store.Device(r.Context(), r.PathValue("id"))
@@ -49,6 +55,23 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	case takeover.ControlWake:
 		if err = s.Xiaomi.Wake(r.Context(), d.Hardware, d.MiotDID); err == nil {
 			s.Engine.Woke(d.DeviceID)
+		}
+	case takeover.ControlNext, takeover.ControlPrevious, takeover.ControlMode:
+		if s.Dispatcher == nil {
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "这个版本不能切歌")
+			return
+		}
+		switch req.Action {
+		case takeover.ControlMode:
+			err = s.Dispatcher.SetPlayMode(r.Context(), d.DeviceID, req.Mode)
+		case takeover.ControlNext:
+			err = s.Dispatcher.Skip(r.Context(), d.DeviceID, 1)
+		default:
+			err = s.Dispatcher.Skip(r.Context(), d.DeviceID, -1)
+		}
+		if errors.Is(err, takeover.ErrNoQueue) || errors.Is(err, takeover.ErrNoSong) {
+			writeError(w, http.StatusConflict, "no_song", err.Error())
+			return
 		}
 	default:
 		if req.Action == takeover.ControlStop && s.Dispatcher != nil {
@@ -86,9 +109,14 @@ func (s *Server) controlState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		State  string `json:"state"`
-		Volume *int   `json:"volume"`
+		State  string          `json:"state"`
+		Volume *int            `json:"volume"`
+		Mode   string          `json:"mode"`
+		Queue  *takeover.Queue `json:"queue"` // null: nothing to skip
 	}{State: home.Idle}
+	if s.Dispatcher != nil {
+		out.Mode, out.Queue = s.Dispatcher.PlayMode(r.Context(), d.DeviceID), s.Dispatcher.Queue(d.DeviceID)
+	}
 	switch p.Status {
 	case xiaomi.PlayPlaying:
 		out.State = home.Playing

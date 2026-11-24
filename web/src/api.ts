@@ -12,7 +12,9 @@ export interface OnlineOutcome { source: string; state: string; detail?: string 
 export interface Playlist { guid: string; name: string }
 /** What can be sent to a speaker to play. */
 export type Sendable = { source: 'favorites' } | { source: 'playlist' | 'album' | 'online'; id: string } | { source: 'artist'; name: string };
-export type Press = 'play' | 'pause' | 'stop' | 'volume' | 'wake';
+export type Press = 'play' | 'pause' | 'stop' | 'next' | 'previous' | 'mode' | 'volume' | 'wake';
+export type PlayMode = 'loop' | 'shuffle' | 'one';
+export interface Controls { state: 'playing' | 'paused' | 'idle'; volume: number | null; mode: PlayMode | ''; queue: { list: string; at: number; total: number } | null }
 
 export type Mode = 'off' | 'observe' | 'takeover';
 
@@ -404,8 +406,8 @@ export const api = {
   neteaseQR: () => request<NeteaseQR>('GET', '/api/sources/netease/qr'),
   neteaseCancel: () => request<void>('DELETE', '/api/sources/netease/qr'),
   setSource: (name: string, enabled: boolean) => request<{ sources: SourceHealth[] }>('PATCH', `/api/sources/${name}`, { enabled }),
-  press: (id: string, action: Press, volume?: number) => request<void>('POST', `/api/devices/${encodeURIComponent(id)}/control`, { action, volume }),
-  controls: (id: string) => request<{ state: 'playing' | 'paused' | 'idle'; volume: number | null }>('GET', `/api/devices/${encodeURIComponent(id)}/control`),
+  press: (id: string, action: Press, with_: { volume?: number; mode?: PlayMode } = {}) => request<void>('POST', `/api/devices/${encodeURIComponent(id)}/control`, { action, ...with_ }),
+  controls: (id: string) => request<Controls>('GET', `/api/devices/${encodeURIComponent(id)}/control`),
   home: () => request<HomeStatus>('GET', '/api/home'),
   setHome: (enabled: boolean) => request<HomeStatus>('PUT', '/api/home', { enabled }),
   homeToken: () => request<{ token: string }>('POST', '/api/home/token'),

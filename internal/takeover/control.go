@@ -14,6 +14,10 @@ const (
 	ControlStop   = "stop"
 	ControlVolume = "volume"
 	ControlWake   = "wake"
+
+	ControlNext     = "next"
+	ControlPrevious = "previous"
+	ControlMode     = "mode"
 )
 
 // pressed is how long a speaker gets to do what a button asked before it is looked at.

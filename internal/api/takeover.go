@@ -76,7 +76,7 @@ func (s *Server) takeoverTest(w http.ResponseWriter, r *http.Request) {
 	takeover.Follow(h, tr)
 	var ended func(takeover.End)
 	if song != nil && s.Dispatcher != nil {
-		ended = s.Dispatcher.After(d.DeviceID, d.Hardware, song.TrackID, true)
+		ended = s.Dispatcher.After(d.DeviceID, d.Hardware, song.TrackID, nil, true)
 	}
 	run, err := s.Engine.Start(r.Context(), takeover.Request{DeviceID: d.DeviceID, Hardware: d.Hardware, Kind: kind, Trace: tr, Song: song, Ended: ended,
 		Track: takeover.Track{URL: h.URL, Label: h.Label, Fetched: h.Fetched(), Restarted: h.Restarted(), Duration: length,

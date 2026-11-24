@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ApiError, type Device } from '../api';
 import { deviceTitle } from '../copy';
 
@@ -18,7 +19,7 @@ export function Play({ send, title, devices, label }: { send: (device: string) =
   }, [open]);
   useEffect(() => {
     if (!state || state.tone === 'busy') return;
-    const t = setTimeout(() => setState(null), 5000);
+    const t = setTimeout(() => setState(null), state.tone === 'bad' ? 12000 : 5000);
     return () => clearTimeout(t);
   }, [state]);
 
@@ -47,7 +48,8 @@ export function Play({ send, title, devices, label }: { send: (device: string) =
           {targets.map((d) => <button key={d.device_id} role="menuitem" type="button" onClick={() => play(d)}><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="5" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M9 6.5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><circle cx="12" cy="14.5" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg><span>{deviceTitle(d)}</span></button>)}
         </span>
       )}
-      {state && <span className={`play-state ${state.tone}`} role="status">{state.text}</span>}
+      {/* out of the row: that fades away with the pointer, and would take this along */}
+      {state && createPortal(<button type="button" className={`play-state ${state.tone}`} title="点一下关闭" onClick={(e) => { e.stopPropagation(); if (state.tone !== 'busy') setState(null); }}><span role={state.tone === 'bad' ? 'alert' : 'status'}>{state.text}</span></button>, document.body)}
     </span>
   );
 }

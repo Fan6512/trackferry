@@ -43,7 +43,7 @@ function ways(songs: Song[]): Way[] {
     { key: 'title', name: '只说歌名', parts: [{ text: '我想听', role: '口令' }, { text: b.title, role: '歌名' }], note: '好几位歌手都唱过时，先放公认的原唱；想听另一版就带上歌手', pic: b },
     { key: 'artist', name: '听一位歌手', parts: [{ text: '播放', role: '口令' }, { text: c.artist, role: '歌手' }, { text: '的歌' }], note: '曲库里这位歌手的歌，随机一首接一首。想只放一首，在“设置 → 连续播放”里关掉', pic: c },
     { key: 'any', name: '随便听听', parts: [{ text: '随便放', role: '口令' }, { text: '一首歌' }], note: '从曲库里随机挑一首。想一直放下去，在“设置 → 连续播放”里打开随机接着放' },
-    { key: 'list', name: '连着听', parts: [{ text: '播放', role: '口令' }, { text: '我的收藏' }], note: '随机连播飞牛音乐的收藏；说“播放某某歌单”就播那个歌单' },
+    { key: 'list', name: '连着听', parts: [{ text: '播放', role: '口令' }, { text: '我的收藏' }], note: '连着放飞牛音乐的收藏；说“播放某某歌单”就播那个歌单' },
     { key: 'control', name: '播放控制', parts: [{ text: '下一首', role: '口令' }], note: '暂停、继续由小爱自己做；连播时的上一首、下一首由我们换；说“停止”，连播就结束' },
   ];
 }
@@ -56,7 +56,7 @@ function verdict(r: Reading): { yes: boolean; text: string } {
     case 'artist': return { yes: true, text: `点歌：${r.artist}的歌，随机一首接一首` };
     case 'random': return { yes: true, text: '点歌：随机一首' };
     case 'version': return { yes: true, text: r.artist ? `接着上一首：换成${r.artist}唱的${r.verb ? `；没点过歌就放${r.artist}的任意一首` : ''}` : '接着上一首：换一位歌手唱的' };
-    case 'list': return { yes: true, text: r.control === 'favorites' ? '随机连播飞牛音乐的收藏' : r.title ? `随机连播飞牛音乐的歌单“${r.title}”` : '随机连播飞牛音乐的歌单，有好几个时要说名字' };
+    case 'list': return { yes: true, text: r.control === 'favorites' ? '连着放飞牛音乐的收藏' : r.title ? `连着放飞牛音乐的歌单“${r.title}”` : '连着放飞牛音乐的歌单，有好几个时要说名字' };
     case 'favorite': if (r.control?.startsWith('list_')) return { yes: true, text: `放歌时说：${r.control === 'list_add' ? '加入' : '移出'}飞牛音乐的歌单${r.title ? `“${r.title}”` : ''}` };
       return { yes: true, text: r.control === 'remove' ? '放歌时说：移出飞牛音乐的收藏' : '放歌时说：加入飞牛音乐的收藏' };
     case 'control': return { yes: false, text: `播放控制：${controlName[r.control ?? ''] ?? '交给小爱'}，小爱自己做` };

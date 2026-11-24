@@ -68,6 +68,7 @@ type Route struct {
 	found *online.Found
 	asked string
 	queue []int64
+	order []int64
 }
 
 // Match is the local file chosen, if any.
@@ -499,8 +500,8 @@ func (r *Router) pick(rt *Route, in intent.Intent) {
 		rt.take(m)
 		if in.Kind == intent.KindArtist && r.ArtistQueue != nil && r.ArtistQueue() {
 			if ids := r.Library.ArtistIDs(in.Artist); len(ids) > 1 {
-				rt.List, rt.queue = in.Artist+"的歌", shuffled(ids, m.ID)
-				l.Detail = fmt.Sprintf("%s的 %d 首歌，随机连播", in.Artist, len(ids))
+				rt.List, rt.queue, rt.order = in.Artist+"的歌", shuffled(ids, m.ID), ids
+				l.Detail = fmt.Sprintf("%s的 %d 首歌，连着放", in.Artist, len(ids))
 				rt.Basis[len(rt.Basis)-1].Text = l.Detail
 			}
 		}

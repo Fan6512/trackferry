@@ -546,6 +546,41 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	tick := time.NewTimer(fast)
 	defer tick.Stop()
 	fetched := req.Track.Fetched
+	onFetched := func() {
+		fetched = nil
+		fetchedAt = e.now()
+		r.step(StepFetched, true, "")
+	}
+	// The stream is being pulled: do not keep the user waiting on a status that is late.
+	statusOrUnmute := func() (p xiaomi.PlayStatus, err error) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer logx.Recover(e.log, "接管")
+			err = errors.New("状态读不懂")
+			p, err = r.status()
+		}()
+		var due <-chan time.Time
+		arm := func() {
+			if !fetchedAt.IsZero() && !confirmed {
+				due = time.After(e.timing.UnmuteAfter - e.now().Sub(fetchedAt))
+			}
+		}
+		arm()
+		for {
+			select {
+			case <-done:
+				return p, err
+			case <-fetched:
+				onFetched()
+				arm()
+			case <-due:
+				if ctx.Err() == nil {
+					restore()
+				}
+			}
+		}
+	}
 guard:
 	for e.now().Before(deadline) {
 		select {
@@ -553,9 +588,7 @@ guard:
 			cancelled()
 			return
 		case <-fetched:
-			fetched = nil
-			fetchedAt = e.now()
-			r.step(StepFetched, true, "")
+			onFetched()
 			tick.Reset(fast / 2)
 			continue
 		case <-released:
@@ -570,9 +603,9 @@ guard:
 			tick.Reset(fast)
 		}
 		if !fetchedAt.IsZero() && !confirmed && e.now().Sub(fetchedAt) >= e.timing.UnmuteAfter {
-			restore() // the stream is being pulled; do not keep the user waiting on a lagging status
+			restore()
 		}
-		p, err := r.status()
+		p, err := statusOrUnmute()
 		if err != nil {
 			continue
 		}
