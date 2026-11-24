@@ -211,6 +211,7 @@ func (s *Server) Handler() http.Handler {
 		if s.Netease != nil {
 			authed("GET /api/sources/netease/account", s.neteaseAccount)
 			authed("DELETE /api/sources/netease/account", s.neteaseLogout)
+			authed("POST /api/sources/netease/account", s.neteaseSignIn)
 			authed("POST /api/sources/netease/qr", s.neteaseStart)
 			authed("GET /api/sources/netease/qr", s.neteaseQR)
 			authed("DELETE /api/sources/netease/qr", s.neteaseCancel)

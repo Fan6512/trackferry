@@ -58,3 +58,20 @@ func (s *Server) neteaseLogout(w http.ResponseWriter, r *http.Request) {
 	s.Log.Info("网易云　已退出")
 	writeJSON(w, http.StatusOK, s.Netease.Account())
 }
+
+func (s *Server) neteaseSignIn(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Cookie string `json:"cookie"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.Netease.SignIn(ctx, body.Cookie); err != nil {
+		writeError(w, http.StatusBadGateway, "netease", online.Describe(err))
+		return
+	}
+	s.Log.Info("网易云　已登录")
+	writeJSON(w, http.StatusOK, s.Netease.Account())
+}

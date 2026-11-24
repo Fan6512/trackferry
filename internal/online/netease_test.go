@@ -92,6 +92,19 @@ func TestNeteasePlaysWhatTheAccountMay(t *testing.T) {
 	if got, _ := n.Search(ctx, "甲"); got[0].Restricted || !got[0].Member {
 		t.Fatalf("%+v", got[0])
 	}
+	// A browser's session instead of the code: only a live one is taken.
+	b := &Netease{Client: srv.Client(), Base: srv.URL, File: filepath.Join(t.TempDir(), "n.json")}
+	live := "secret" + strings.Repeat("a", 40)
+	for _, bad := range []string{"", "x", "__csrf=1", "MUSIC_U=short", strings.Repeat("b", 40), live + "\r\nX: y"} {
+		if err := b.SignIn(ctx, bad); err == nil || b.Account().Linked {
+			t.Fatalf("%q taken", bad)
+		}
+	}
+	for _, good := range []string{" " + live + "\n", "NMTID=1; MUSIC_U=" + live + "; __csrf=abc"} {
+		if err := b.SignIn(ctx, good); err != nil || b.Account().Name != "某人" {
+			t.Fatal(err)
+		}
+	}
 	// Read back; then the session ends elsewhere: free songs only, and the owner is told.
 	m := &Netease{Client: srv.Client(), Base: srv.URL, File: file}
 	if err := m.Load(); err != nil || !m.Account().Linked {

@@ -399,6 +399,7 @@ export const api = {
   tryRoute: (text: string) => request<{ intent: Intent; route: Route }>('POST', '/api/route/try', { text }),
   netease: () => request<NeteaseAccount>('GET', '/api/sources/netease/account'),
   neteaseLogout: () => request<NeteaseAccount>('DELETE', '/api/sources/netease/account'),
+  neteaseSignIn: (cookie: string) => request<NeteaseAccount>('POST', '/api/sources/netease/account', { cookie }),
   neteaseStart: () => request<{ url: string }>('POST', '/api/sources/netease/qr'),
   neteaseQR: () => request<NeteaseQR>('GET', '/api/sources/netease/qr'),
   neteaseCancel: () => request<void>('DELETE', '/api/sources/netease/qr'),

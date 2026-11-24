@@ -10,7 +10,7 @@
 | 飞牛音乐会话 | `data/private/feiniu.json` | 0600。密码不保存 |
 | 管理密码 | 数据库 | PBKDF2-SHA256，60 万次。登录页的“保存密码”交给浏览器的密码库，TrackFerry 和页面都不存明文 |
 | Home Assistant 令牌 | 数据库 | 只存 SHA-256 摘要 |
-| 网易云会话 | `data/private/netease.json` | 0600。只有扫码登录后才有，退出时删除；只发给 music.163.com，不进日志和接口响应 |
+| 网易云会话 | `data/private/netease.json` | 0600。只有登录网易云后才有，退出时删除；只发给 music.163.com，不进日志和接口响应 |
 | 脚本令牌 | `data/private/admin_token` | 0600 |
 
 这些不进日志、接口响应和镜像。页面只显示打码的小米 ID。

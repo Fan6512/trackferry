@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -269,6 +270,8 @@ func (n *Netease) QR(ctx context.Context) (string, error) {
 	case 800:
 		return QRExpired, nil
 	case 803:
+	case 8821:
+		return "", refused("网易云要求额外验证，扫码登不上，请改用“粘贴凭据”")
 	default:
 		return "", refused("网易云没有同意这次登录（" + strconv.Itoa(r.Code) + "），过一会儿再试")
 	}
@@ -298,6 +301,67 @@ func (n *Netease) QR(ctx context.Context) (string, error) {
 	return QRDone, nil
 }
 
+var (
+	musicU = regexp.MustCompile(`(?:^|[;\s])MUSIC_U=([A-Za-z0-9%._~+/=-]{32,})(?:$|[;\s])`)
+	csrf   = regexp.MustCompile(`(?:^|[;\s])__csrf=([A-Za-z0-9]{1,128})(?:$|[;\s])`)
+	bare   = regexp.MustCompile(`^[A-Za-z0-9%._~+/-]{32,}$`)
+)
+
+// SignIn takes the session of a browser that is signed in: the value of MUSIC_U, or a cookie
+// header with it. It is kept only if 网易云 knows it.
+func (n *Netease) SignIn(ctx context.Context, text string) error {
+	text = strings.TrimSpace(text)
+	if bare.MatchString(text) {
+		text = "MUSIC_U=" + text
+	}
+	m := musicU.FindStringSubmatch(text)
+	if m == nil || len(m[1]) > 2048 {
+		return refused("没有找到 MUSIC_U，请只复制它的值")
+	}
+	cookie := "MUSIC_U=" + m[1]
+	if c := csrf.FindStringSubmatch(text); c != nil {
+		cookie += "; __csrf=" + c[1]
+	}
+	a, err := n.ask(ctx, cookie)
+	if err != nil {
+		return err
+	}
+	if !a.Linked {
+		return refused("网易云不认这个凭据，可能已过期，请重新登录后再复制")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	was := n.ses
+	n.ses = neteaseSession{Cookie: cookie, Name: a.Name, VIP: a.VIP, LinkedMS: time.Now().UnixMilli()}
+	if err := n.save(); err != nil {
+		n.ses = was
+		return refused("登录凭据没能存下来")
+	}
+	n.key = ""
+	return nil
+}
+
+// ask tells whose session a cookie is; not linked: nobody's.
+func (n *Netease) ask(ctx context.Context, cookie string) (NeteaseAccount, error) {
+	var r struct {
+		Code    int `json:"code"`
+		Profile *struct {
+			Name string `json:"nickname"`
+			VIP  int    `json:"vipType"`
+		} `json:"profile"`
+	}
+	if _, err := n.post(ctx, "/api/nuser/account/get", url.Values{}, cookie, &r); err != nil {
+		return NeteaseAccount{}, err
+	}
+	if r.Code != 200 && r.Code != 301 {
+		return NeteaseAccount{}, errors.New("网易云返回了看不懂的内容")
+	}
+	if r.Profile == nil {
+		return NeteaseAccount{}, nil
+	}
+	return NeteaseAccount{Linked: true, Name: r.Profile.Name, VIP: r.Profile.VIP > 0}, nil
+}
+
 // CancelQR drops the login in progress.
 func (n *Netease) CancelQR() {
 	n.mu.Lock()
@@ -313,28 +377,18 @@ func (n *Netease) Check(ctx context.Context) error {
 	if cookie == "" {
 		return nil
 	}
-	var r struct {
-		Code    int             `json:"code"`
-		Account json.RawMessage `json:"account"`
-		Profile *struct {
-			Name string `json:"nickname"`
-			VIP  int    `json:"vipType"`
-		} `json:"profile"`
-	}
-	if _, err := n.post(ctx, "/api/nuser/account/get", url.Values{}, cookie, &r); err != nil {
+	a, err := n.ask(ctx, cookie)
+	if err != nil {
 		return err
-	}
-	if r.Code != 200 && r.Code != 301 {
-		return errors.New("网易云返回了看不懂的内容")
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.ses.Cookie != cookie {
 		return nil
 	}
-	n.ses.Expired = r.Profile == nil
-	if r.Profile != nil {
-		n.ses.Name, n.ses.VIP = r.Profile.Name, r.Profile.VIP > 0
+	n.ses.Expired = !a.Linked
+	if a.Linked {
+		n.ses.Name, n.ses.VIP = a.Name, a.VIP
 	}
 	return n.save()
 }

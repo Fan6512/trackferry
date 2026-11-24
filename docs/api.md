@@ -50,7 +50,7 @@
 | `GET·PUT /api/library/tracks/{id}/favorite` | 收藏 |
 | `GET /api/cover/{id}` | 封面 |
 | `PATCH /api/sources/{kuwo\|kugou\|migu\|netease}` | 音源开关 |
-| `GET / DELETE /api/sources/netease/account` | 网易云登录状态 / 退出 |
+| `GET / POST / DELETE /api/sources/netease/account` | 网易云登录状态 / 用浏览器的 MUSIC_U 登录（`cookie`）/ 退出 |
 | `POST / GET / DELETE /api/sources/netease/qr` | 取二维码内容 / 查扫码进度（waiting、scanned、expired、done）/ 取消 |
 | `GET·POST·DELETE /api/feiniu` · `GET /api/feiniu/discover` | 飞牛音乐登录与查找 |
 
