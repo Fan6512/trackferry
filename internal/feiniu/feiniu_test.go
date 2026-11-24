@@ -60,6 +60,41 @@ func nas(t *testing.T, valid *bool) *httptest.Server {
 	authed("/track/stream", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "a.flac", time.Time{}, strings.NewReader("0123456789"))
 	})
+	authed("/favorite-track/list", func(w http.ResponseWriter, r *http.Request) {
+		// Two pages.
+		list := []any{map[string]any{"guid": "f" + r.URL.Query().Get("page"), "title": "歌"}}
+		reply(w, 0, map[string]any{"list": list, "total": 2, "sort": r.URL.Query().Get("sort")})
+	})
+	authed("/playlist/list", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, 0, map[string]any{"list": []any{map[string]any{"guid": "p1", "name": "测试", "createdAt": 1, "coverId": nil}}})
+	})
+	in := []string{"g0"}
+	authed("/track/playlist-detail/list", func(w http.ResponseWriter, r *http.Request) {
+		list := []any{}
+		for _, g := range in {
+			if r.URL.Query().Get("playlistGUID") == "p1" {
+				list = append(list, map[string]any{"guid": g, "title": "歌"})
+			}
+		}
+		reply(w, 0, map[string]any{"list": list, "total": len(list)})
+	})
+	authed("/playlist/add-track", func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			GUID   string   `json:"guid"`
+			Tracks []string `json:"trackGUIDs"`
+		}
+		json.NewDecoder(r.Body).Decode(&b)
+		if r.Method != http.MethodPost || b.GUID != "p1" {
+			reply(w, 100001, nil)
+			return
+		}
+		in = append(in, b.Tracks...)
+		reply(w, 0, nil)
+	})
+	authed("/playlist/remove-track", func(w http.ResponseWriter, r *http.Request) {
+		in = in[:1]
+		reply(w, 0, nil)
+	})
 	s := httptest.NewTLSServer(mux)
 	t.Cleanup(s.Close)
 	return s
@@ -90,6 +125,20 @@ func TestLinkUseAndExpiry(t *testing.T) {
 	}
 	if songs, n, err := m.Songs(ctx, 1, 200); err != nil || n != 3 || songs[0].Artists[0].Name != "甲" {
 		t.Errorf("songs: %v %d %v", songs, n, err)
+	}
+	if s, err := m.Favorites(ctx); err != nil || len(s) != 2 || s[1].GUID != "f2" {
+		t.Errorf("favourites: %v %v", s, err)
+	}
+	if p, err := m.Playlists(ctx); err != nil || len(p) != 1 || p[0] != (Playlist{"p1", "测试"}) {
+		t.Errorf("playlists: %v %v", p, err)
+	}
+	for _, x := range []struct{ on, changed bool }{{true, true}, {true, false}, {false, true}, {false, false}} {
+		if changed, err := m.PutInPlaylist(ctx, "p1", "g1", x.on); err != nil || changed != x.changed {
+			t.Errorf("put %v: %v %v", x, changed, err)
+		}
+	}
+	if s, err := m.PlaylistSongs(ctx, "p1"); err != nil || len(s) != 1 || s[0].GUID != "g0" {
+		t.Errorf("playlist: %v %v", s, err)
 	}
 	if l, err := m.Lyrics(ctx, "g0"); err != nil || l != "[00:01.00]y" {
 		t.Errorf("lyrics %q %v", l, err)

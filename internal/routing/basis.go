@@ -37,7 +37,22 @@ func Heard(query string, in intent.Intent) string {
 		parts = append(parts, "随便听")
 	case intent.KindVersion:
 		parts = append(parts, "换一位歌手唱")
+	case intent.KindList:
+		what := "飞牛音乐的收藏"
+		if in.Control == intent.ListPlaylist {
+			what = "飞牛音乐的歌单"
+			if in.Title != "" {
+				what += "“" + in.Title + "”"
+			}
+		}
+		return strings.Join(append(parts, "随机连播"+what), "，")
 	case intent.KindFavorite:
+		switch in.Control {
+		case intent.ListAdd:
+			return "把正在放的歌加入歌单 " + in.Title
+		case intent.ListRemove:
+			return "把正在放的歌移出歌单 " + in.Title
+		}
 		if in.Control == "remove" {
 			return "取消收藏正在放的歌"
 		}

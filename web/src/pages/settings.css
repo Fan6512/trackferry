@@ -35,3 +35,8 @@
 .st-progress { display: flex; align-items: center; gap: 10px; }
 .st-proxy { padding-left: 28px; } .st-proxy .link { margin-left: 10px; }
 @media (max-width: 860px) { .st-proxy { padding-left: 20px; } }
+
+.kept { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin-top: 18px; padding-top: 20px; border-top: 1px solid var(--line); } .kept > div { flex: 1 1 260px; display: grid; } .kept b { font-weight: 420; } .kept small { color: var(--ink3); } .kept-sure { display: inline-flex; gap: 8px; }
+.kept select { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--well); color: var(--ink); font: inherit; } .kept option { color: #10181b; background: #fff; }
+
+.ha-token { display: grid; gap: 12px; justify-items: start; } .ha-token code { max-width: 100%; padding: 12px 16px; border-radius: 6px; background: var(--well); overflow-wrap: anywhere; user-select: all; }

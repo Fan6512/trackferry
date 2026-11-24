@@ -98,5 +98,5 @@ export function tally(routes: (Route | null)[]) {
 /** A song sent from the library, as if it had been asked for. */
 export function pushed(run?: TakeoverRun | null): Route | null {
   const s = run?.song;
-  return s ? { preview: false, decision: 'local', source: 'library', ms: 0, layers: [], track_id: s.track_id, title: s.title, artist: s.artist, album: s.album, cover: s.cover, duration_ms: s.duration_ms } as unknown as Route : null;
+  return s ? { preview: false, decision: 'local', source: 'library', ms: 0, layers: [], track_id: s.track_id, list: s.list, title: s.title, artist: s.artist, album: s.album, cover: s.cover, duration_ms: s.duration_ms } as unknown as Route : null;
 }

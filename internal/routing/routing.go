@@ -58,6 +58,7 @@ type Route struct {
 	Cover      string   `json:"cover,omitempty"`
 	Album      string   `json:"album,omitempty"`
 	DurationMS int64    `json:"duration_ms,omitempty"`
+	List       string   `json:"list,omitempty"`   // the list that plays on after it
 	Others     []string `json:"others,omitempty"` // other singers of the same title in the library
 	Basis      []Fact   `json:"basis,omitempty"`
 	Layers     []Layer  `json:"layers"`
@@ -65,6 +66,8 @@ type Route struct {
 
 	match *library.Match
 	found *online.Found
+	asked string
+	queue []int64
 }
 
 // Match is the local file chosen, if any.
@@ -73,11 +76,23 @@ func (r *Route) Match() *library.Match { return r.match }
 // Found is the online song chosen, if any.
 func (r *Route) Found() *online.Found { return r.found }
 
+// Asked names the request the online song answers; the cache remembers it.
+func (r *Route) Asked() string { return r.asked }
+
+// askedKey is the same for requests that mean the same song.
+func askedKey(in intent.Intent, query string) string {
+	return names.Norm(in.Title) + "|" + names.Norm(in.Artist) + "|" + strings.Join(names.Versions(query), ",")
+}
+
 // Router is safe for concurrent use.
 type Router struct {
 	Library *library.Library
 	Online  *online.Service // nil: no online layer
-	Log     *slog.Logger
+	// Cached returns the song kept from the last time this was asked; optional.
+	Cached func(asked string) *online.Found
+	// Lists reads the lists of 飞牛音乐; optional.
+	Lists Lists
+	Log   *slog.Logger
 	// Openable reports whether a local file can be read right now (nil: assume so).
 	Openable func(rel string) bool
 }
@@ -135,6 +150,7 @@ func (r *Router) Decide(ctx context.Context, in intent.Intent, query string) *Ro
 	start := time.Now()
 	tr := live.From(ctx)
 	rt := &Route{Decision: Native, Layers: []Layer{}}
+	version := in.Kind == intent.KindVersion // "another version" must not find the same one
 	rt.Because("听成", "%s", Heard(query, in))
 	defer func() {
 		final := Layer{Name: "xiaomi", State: online.StateSkipped, Candidates: []Candidate{}}
@@ -151,6 +167,11 @@ func (r *Router) Decide(ctx context.Context, in intent.Intent, query string) *Ro
 		return rt
 	case intent.KindArtist, intent.KindRandom:
 		r.pick(rt, in)
+		tr.Layer("library", rt.Layers[0])
+		return rt
+	case intent.KindList:
+		tr.Layer("library", Layer{Name: "library", State: online.StateAsking, Candidates: []Candidate{}})
+		r.list(ctx, rt, in)
 		tr.Layer("library", rt.Layers[0])
 		return rt
 	case intent.KindVersion:
@@ -188,6 +209,19 @@ func (r *Router) Decide(ctx context.Context, in intent.Intent, query string) *Ro
 		rt.Reason = "曲库没有这首歌"
 		return rt
 	}
+	if !version {
+		rt.asked = askedKey(in, query)
+	}
+	if rt.asked != "" && len(rivals) == 0 && r.Cached != nil {
+		if f := r.Cached(rt.asked); f != nil && r.Online.Enabled(f.Candidate.Source) {
+			rt.takeOnline(f)
+			l := Layer{Name: rt.Source, State: online.StateHit, Detail: "以前放过，缓存里有", Candidates: []Candidate{}}
+			rt.Layers = append(rt.Layers, l)
+			tr.Layer(rt.Source, l)
+			rt.Because("选它", "以前放过，缓存里有，不用再去找")
+			return rt
+		}
+	}
 	if len(rivals) > 0 {
 		// The platforms are only asked for an opinion, so they get less time.
 		var cancel context.CancelFunc
@@ -211,11 +245,15 @@ func (r *Router) Decide(ctx context.Context, in intent.Intent, query string) *Ro
 		rt.Reason = reason(outs, restricted)
 		return rt
 	}
-	c := found.Candidate
-	rt.Decision, rt.Source, rt.Title, rt.Artist, rt.found = Online, c.Source, c.Title, c.Artist, found
-	rt.DurationMS = found.Stream.Duration.Milliseconds()
+	rt.takeOnline(found)
 	rt.online(outs)
 	return rt
+}
+
+func (rt *Route) takeOnline(f *online.Found) {
+	c := f.Candidate
+	rt.Decision, rt.Source, rt.Title, rt.Artist, rt.found = Online, c.Source, c.Title, c.Artist, f
+	rt.DurationMS = f.Stream.Duration.Milliseconds()
 }
 
 func layer(o online.Outcome) Layer {

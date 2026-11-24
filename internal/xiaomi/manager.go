@@ -98,6 +98,7 @@ type Manager struct {
 	syncMu   sync.Mutex // serialises syncs and token renewals
 	tried    time.Time  // last renewal that failed; with syncMu
 	triedErr error
+	miot     *Session  // a Mi Home token; with syncMu
 	renewed  time.Time // last renewal that worked; with syncMu
 }
 
@@ -179,7 +180,7 @@ func (m *Manager) Unlink() error {
 	m.syncMu.Lock()
 	defer m.syncMu.Unlock()
 	m.mu.Lock()
-	m.sess, m.relink, m.lastSync = nil, false, nil
+	m.sess, m.relink, m.lastSync, m.miot = nil, false, nil, nil
 	m.mu.Unlock()
 	if err := os.Remove(m.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

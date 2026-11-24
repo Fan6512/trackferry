@@ -84,7 +84,18 @@ docker compose logs trackferry
 | --- | --- |
 | `data/trackferry.db` | 点歌记录、音箱设置、曲库索引 |
 | `data/private/` | 小米与飞牛的登录凭据、脚本令牌，权限 0600 |
+| `data/cache/` | 听过的线上歌和它们的目录，可以随时删，不必备份。挂载了 `/cache` 时歌在那里 |
 | `data/config.yaml` | 可选的配置文件 |
+
+### 把听过的线上歌放到机械盘
+
+默认放在 `data/cache`。想放到别的盘，在 `compose.yaml` 的 `volumes` 里加一行（左边换成自己的目录），再执行 `docker compose up -d`：
+
+```yaml
+      - /vol2/1000/Cache:/cache
+```
+
+只用其中的 `trackferry` 文件夹，目录里别的内容不动、不改属主。换位置时，原来 `data/cache` 里存的歌会删掉，以后再听再存。机械盘休眠时，2.5 秒内读不出来就直接从音源播放，不让人等。挂载的目录写不了时，会在日志里说明并继续用 `data/cache`。
 
 备份前先停下，保证数据库完整：
 
@@ -93,7 +104,7 @@ docker compose stop
 ```
 
 ```sh
-sudo tar czf trackferry-backup.tar.gz data compose.yaml
+sudo tar czf trackferry-backup.tar.gz --exclude=data/cache data compose.yaml
 ```
 
 ```sh
@@ -112,15 +123,17 @@ docker compose start
 
 新版本放在 `data/update`。镜像比它新时自动改用镜像里的程序；想放弃在线更新、回到镜像的版本，停下容器，删掉 `data/update/installed.json` 再启动。容器需要 `restart: unless-stopped`，数据目录不能挂载成 `noexec`。
 
-**用命令更新**：把 `compose.yaml` 的镜像标签改成新版本号，然后：
+**用命令更新**：先备份，再在 `compose.yaml` 所在目录执行：
 
 ```sh
 docker compose pull && docker compose up -d
 ```
 
-先备份再更新。退回旧版本时，把标签改回去，删掉 `data/update/installed.json`，并恢复更新前的 `data`，因为旧程序不一定认识新数据库。
+`compose.yaml` 默认用 `latest`，拉到的就是最新版；以前写了版本号的，先把它改成 `latest`。
 
-标签有三种：`1.0.0` 不会变，推荐使用；`1.0` 跟随小修复；`latest` 跟随最新版。
+退回旧版本时，把 `latest` 换成那个版本号，如 `1.2.0`，删掉 `data/update/installed.json`，并恢复更新前的 `data`，因为旧程序不一定认识新数据库。
+
+标签有三种：`latest` 跟随最新版，是默认值；`1.2` 只跟随 1.2 的小修复；`1.2.0` 固定不变。
 
 ## 从源码构建
 

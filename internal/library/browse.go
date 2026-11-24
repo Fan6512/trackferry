@@ -106,6 +106,17 @@ func (l *Library) ByPath(p string) (store.TrackRow, bool) {
 	return x.rows[i], true
 }
 
+// FavoriteIDs are the favourites as of the last sync.
+func (l *Library) FavoriteIDs() []int64 {
+	var out []int64
+	for _, t := range l.index().rows {
+		if t.Favorite {
+			out = append(out, t.ID)
+		}
+	}
+	return out
+}
+
 // Shelf is what the management page opens with.
 type Shelf struct {
 	Newest    []Album          `json:"newest"`

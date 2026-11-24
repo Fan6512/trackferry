@@ -133,6 +133,18 @@ func VersionPenalty(text, request string) int {
 	return n
 }
 
+// Versions lists the version words in text.
+func Versions(text string) []string {
+	l := strings.ToLower(text)
+	var out []string
+	for _, v := range versions {
+		if strings.Contains(l, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // SameArtist reports whether two credits share a singer, under any name they give.
 func SameArtist(a, b string) bool {
 	if Norm(a) != "" && Norm(a) == Norm(b) {

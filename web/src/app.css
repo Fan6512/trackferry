@@ -385,3 +385,14 @@ h1 { font-weight: 480; } h2 { font-weight: 520; } b { font-weight: 540; }
   .transport { margin-top: 6px; gap: 8px; } .swim { grid-template-columns: 38px minmax(0, 1fr) 38px; gap: 12px; font-size: 13px; }
   .player-wide, .player-wide.with-spks { --raft: 84px; --shore: calc(128px + 84px); } .player-wide .raft { left: var(--gut); } .player-wide .words, .player-wide.with-spks .words { bottom: calc(env(safe-area-inset-bottom) + 66px); } .player-wide .sheet-words li { font-size: 24px; } .player-wide::after { height: 76%; }
 }
+
+.lib-sub a { margin-left: 20px; color: var(--stone); text-underline-offset: 4px; }
+.lack-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 18px 40px; margin-bottom: 30px; } .lack-head h1 { font-size: clamp(30px, 3.4vw, 46px); font-weight: 480; line-height: 1.2; } .lack-head p { margin-top: 6px; color: var(--ink2); }
+.tracks.lacking li { grid-template-columns: minmax(0, 1fr) auto 62px; } .lacking .track-tech { display: block; } .lack-owned { color: var(--ink3); } .lack-owned b { font-weight: 400; text-decoration: line-through; }
+
+/* ---- buttons of a speaker ---- */
+.ctls { margin-bottom: 16px; } .ctl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ctl { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgb(246 243 236 / .12); color: var(--ink); cursor: pointer; transition: background .15s, transform .15s; }
+.ctl:first-child { background: var(--stone); color: #241503; } .ctl:hover:not(:disabled) { background: rgb(246 243 236 / .22); } .ctl:first-child:hover:not(:disabled) { background: #f8d781; } .ctl:active:not(:disabled) { transform: scale(.94); } .ctl:disabled { opacity: .6; }
+.ctl-vol { display: flex; align-items: center; gap: 10px; flex: 1 1 150px; min-width: 150px; margin-left: 8px; color: var(--ink2); } .ctl-vol svg { flex: none; } .ctl-vol input { flex: 1; min-width: 0; height: 44px; accent-color: var(--stone); cursor: pointer; } .ctl-vol small { min-width: 26px; text-align: right; }
+.ctl-said { margin-top: 8px; color: var(--ink2); font-size: 14px; }

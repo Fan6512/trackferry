@@ -16,7 +16,7 @@ services:
       - relay:/run/trackferry
 
   relay:
-    image: madrays/trackferry:1.1.1
+    image: madrays/trackferry:latest
     container_name: trackferry-relay
     command: ["relay"]
     depends_on: [trackferry]

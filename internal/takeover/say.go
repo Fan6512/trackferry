@@ -2,7 +2,6 @@ package takeover
 
 import (
 	"context"
-	"time"
 	"unicode/utf8"
 
 	"trackferry/internal/logx"
@@ -70,16 +69,7 @@ func (e *Engine) hush(ctx context.Context, dev string, gen int) func() {
 			if newer {
 				return // that run found the pending volume and restores it
 			}
-			for i := 0; i < 3; i++ {
-				c, cancel := context.WithTimeout(bg, 6*time.Second)
-				err := e.sp.SetVolume(c, dev, p.Volume)
-				cancel()
-				if err == nil {
-					e.st.ClearPendingVolume(bg, dev)
-					return
-				}
-				time.Sleep(300 * time.Millisecond)
-			}
+			e.putBack(dev, p.Volume)
 		}
 		e.sp.SetVolume(ctx, dev, 0) // even if this fails it may have arrived: restored either way
 	}

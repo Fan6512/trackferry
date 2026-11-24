@@ -45,16 +45,24 @@ type Dispatcher struct {
 	Streams Streams
 	// Favorite adds a song of the library to the favourites, or takes it out; optional.
 	Favorite func(ctx context.Context, track int64, on bool) error
-	Open     func(*routing.Route) stream.Opener // online audio
-	Allowed  func(deviceID string) bool         // the speaker is released for takeover
-	Log      *slog.Logger
-	Live     *live.Hub // optional
+	// Next is the route of a later song of a list; optional.
+	Next func(track int64, list string) (*routing.Route, bool)
+	// Put adds a song of the library to a playlist, or takes it out; optional.
+	Put  func(ctx context.Context, track int64, name string, on bool) (list string, changed bool, err error)
+	Open func(*routing.Route) stream.Opener // online audio
+	// Keep stores an online song that is being heard; optional.
+	Keep    func(*routing.Route)
+	Allowed func(deviceID string) bool // the speaker is released for takeover
+	Log     *slog.Logger
+	Live    *live.Hub // optional
 	// Name of a speaker, for the web UI; optional.
 	Name func(deviceID string) string
 
 	mu   sync.Mutex
 	gens map[string]*generation
 	last map[string]lastSong
+
+	queues map[string]*queue
 }
 
 type lastSong struct {
@@ -176,7 +184,9 @@ func (d *Dispatcher) TrackOf(rt *routing.Route, tr *live.Trace) (Track, bool, er
 	case rt.Match() != nil:
 		h, err = d.Streams.Song(rt.Path, rt.Label(), length)
 	case rt.Found() != nil:
-		h, err = d.Streams.Proxy(d.Open(rt), rt.Label(), length)
+		if h, err = d.Streams.Proxy(d.Open(rt), rt.Label(), length); err == nil && d.Keep != nil {
+			go d.keep(h, rt)
+		}
 	default:
 		return Track{}, false, nil
 	}
@@ -188,6 +198,25 @@ func (d *Dispatcher) TrackOf(rt *routing.Route, tr *live.Trace) (Track, bool, er
 	// speaker asking for the first byte again.
 	return Track{URL: h.URL, Label: h.Label, Fetched: h.Fetched(), Restarted: h.Restarted(),
 		Length: length, Lost: h.Lost, Resume: Resumer(h, tr)}, true, nil
+}
+
+// How long a song must be wanted before it is kept. Tests shorten it.
+var (
+	keepFetch = time.Minute
+	keepAfter = 20 * time.Second
+)
+
+// keep stores an online song once the speaker has been at it for a while.
+func (d *Dispatcher) keep(h *stream.Handle, rt *routing.Route) {
+	select {
+	case <-h.Fetched():
+	case <-time.After(keepFetch):
+		return
+	}
+	time.Sleep(keepAfter)
+	if !h.Lost() { // hung up early: not this song after all
+		d.Keep(rt)
+	}
 }
 
 // Resumer continues h's song from a point.
@@ -234,11 +263,7 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		d.Log.Info("点歌　处理", "记录", c.ID, "模式", mode, "阶段", s, "说明", why)
 	}
 	in := intent.Intent{Kind: c.IntentKind, Title: c.IntentTitle, Artist: c.IntentArtist, Control: c.IntentControl}
-	name := ""
-	if d.Name != nil {
-		name = d.Name(c.DeviceID)
-	}
-	tr := d.Live.Begin(live.Flow{Kind: "command", DeviceID: c.DeviceID, Device: name, CommandID: c.ID, Said: c.Query,
+	tr := d.Live.Begin(live.Flow{Kind: "command", DeviceID: c.DeviceID, Device: d.name(c.DeviceID), CommandID: c.ID, Said: c.Query,
 		UpstreamMS: c.UpstreamMS, SeenMS: c.SeenMS, Intent: in})
 	ctx = live.With(ctx, tr)
 	if c.Stale {
@@ -260,7 +285,12 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 			// over music of her own, hers is.
 			work := func() (said string) {
 				start := time.Now()
-				rt.Reason, said = d.favorite(bg, c.DeviceID, in.Control == "add")
+				switch in.Control {
+				case intent.ListAdd, intent.ListRemove:
+					rt.Reason, said = d.put(bg, c.DeviceID, in.Title, in.Control == intent.ListAdd)
+				default:
+					rt.Reason, said = d.favorite(bg, c.DeviceID, in.Control == "add")
+				}
 				rt.MS = time.Since(start).Milliseconds()
 				return said
 			}
@@ -292,9 +322,36 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageNative, rt.Reason)
 		return
 	}
+	if q := d.queued(c.DeviceID); take && q != nil && (in.Control == "next" || in.Control == "previous") {
+		rt, req, ok := d.skip(q, c, hardware, tr)
+		if !current() {
+			tr.Done("同一台音箱有了更新的口令")
+			stage(store.StageSkipped, "superseded while preparing")
+			return
+		}
+		if ok && d.queued(c.DeviceID) == q {
+			rt.Basis = nil
+			rt.Because("听成", "%s", routing.Heard(c.Query, in))
+			rt.Because("选它", "%s正在连播", q.list)
+			rt.Because("出声", "%s", act())
+			d.Remember(c.DeviceID, rt.Title, rt.Artist, rt.TrackID)
+			d.Store.SetCommandRoute(bg, c.ID, rt.JSON())
+			tr.Route(*rt)
+			req.Ended = d.turn(q)
+			if _, err := d.Engine.Start(ctx, req); err != nil {
+				d.Drop(c.DeviceID)
+				tr.Done("没能开始接管")
+				stage(store.StageNative, "could not start takeover")
+				return
+			}
+			stage(store.StageTakenOver, rt.Source)
+			return
+		}
+	}
 	if in.Kind == intent.KindControl {
 		if in.Control == "next" || in.Control == "previous" {
 			d.Forget(c.DeviceID)
+			d.Drop(c.DeviceID)
 		}
 		if take {
 			d.Engine.Release(c.DeviceID)
@@ -309,6 +366,8 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageSkipped, "playback controls stay with Xiao AI")
 		return
 	}
+	// Whatever is asked for now, the list is over.
+	list := d.unqueue(c.DeviceID)
 	if p, ok := d.previous(c.DeviceID); ok {
 		ctx = routing.After(ctx, p)
 	}
@@ -361,6 +420,9 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		tr.Done("")
 		if in.Kind == intent.KindVersion && !slices.Contains(c.AnswerTypes, "AUDIO") {
 			// Nothing to change to: the song goes on once Xiao AI has answered.
+			if list != nil && d.Engine.Playing(c.DeviceID) {
+				d.enqueue(list)
+			}
 			d.Engine.Hear(c.DeviceID, Heard{Answer: utf8.RuneCountInString(c.Answer), At: time.Now()})
 		} else {
 			d.Engine.Release(c.DeviceID)
@@ -375,7 +437,14 @@ func (d *Dispatcher) OnCommand(ctx context.Context, c store.Command, hardware, m
 		stage(store.StageSkipped, "superseded while preparing")
 		return
 	}
-	if _, err := d.Engine.Start(ctx, Request{DeviceID: c.DeviceID, Hardware: hardware, Kind: "command", CommandID: c.ID, UpstreamMS: c.UpstreamMS, Track: t, Trace: tr}); err != nil {
+	req := Request{DeviceID: c.DeviceID, Hardware: hardware, Kind: "command", CommandID: c.ID, UpstreamMS: c.UpstreamMS, Track: t, Trace: tr}
+	if ids := rt.Queue(); len(ids) > 0 && d.Next != nil {
+		q := &queue{dev: c.DeviceID, hardware: hardware, list: rt.List, ids: ids}
+		d.enqueue(q)
+		req.Ended = d.turn(q)
+	}
+	if _, err := d.Engine.Start(ctx, req); err != nil {
+		d.Drop(c.DeviceID)
 		d.Log.Warn("接管　没有开始", "原因", err)
 		tr.Done("没能开始接管")
 		stage(store.StageNative, "could not start takeover")

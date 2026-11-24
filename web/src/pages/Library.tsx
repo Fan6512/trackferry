@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { api, ApiError, type Album, type Artist, type Device, type FeiniuInfo, type LibraryStatus, type Shelf, type Track } from '../api';
+import { api, ApiError, type Album, type Artist, type Device, type FeiniuInfo, type LibraryStatus, type Missing, type Shelf, type Track } from '../api';
 import { Cover } from '../components/Cover';
 import { Heart } from '../components/Heart';
 import { Notice } from '../components/Notice';
 import { Play } from '../components/Play';
-import { length, singer } from '../copy';
+import { day, length, singer } from '../copy';
 import type { Place } from '../nav';
 import { songPicture, useBackdrop } from '../stage/Stage';
 
@@ -13,6 +13,7 @@ type Nav = (p: Place, from?: Element | null) => void;
 export function Library({ place, devices, navigate }: { place: Place; devices: Device[]; navigate: Nav }) {
   if (place.kind === 'album') return <AlbumPage key={place.id} id={place.id!} devices={devices} navigate={navigate} />;
   if (place.kind === 'artist') return <ArtistPage key={place.id} name={place.id!} devices={devices} navigate={navigate} />;
+  if (place.kind === 'missing') return <MissingPage navigate={navigate} />;
   return <Front devices={devices} navigate={navigate} />;
 }
 
@@ -95,6 +96,9 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
   const lead = shelf?.newest?.find((a) => a.cover) ?? shelf?.wall?.[0];
   useBackdrop(lead ? songPicture({ title: lead.name, artist: lead.artist, cover: lead.cover }) : undefined);
 
+  const [lack, setLack] = useState(0);
+  useEffect(() => { api.missing().then((r) => setLack(r.songs.filter((s) => !s.owned).length)).catch(() => {}); }, []);
+
   const running = lib?.running ?? false;
   useEffect(() => {
     let on = true;
@@ -161,7 +165,7 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
     <div className="library">
       <header className="lib-head">
         <h1><span className="num">{n(running ? Math.max(lib.seen, lib.tracks) : lib.tracks)}</span> 首歌</h1>
-        <p className="lib-sub">{running ? '正在从飞牛音乐同步' : <>{shelf && shelf.albums > 0 && <>{n(shelf.albums)} 张专辑，</>}{n(lib.artists)} 位歌手{fn.feiniu.linked && <>，来自飞牛音乐</>}</>}</p>
+        <p className="lib-sub">{running ? '正在从飞牛音乐同步' : <>{shelf && shelf.albums > 0 && <>{n(shelf.albums)} 张专辑，</>}{n(lib.artists)} 位歌手{fn.feiniu.linked && <>，来自飞牛音乐</>}</>}{lack > 0 && <a href="#/library/missing" onClick={(e) => { e.preventDefault(); navigate({ page: 'library', kind: 'missing' }); }}>缺 <span className="num">{n(lack)}</span> 首</a>}</p>
         <label className="lib-search">
           <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="6" fill="none" stroke="currentColor" strokeWidth="2" /><path d="M13 13l5 5" stroke="currentColor" strokeWidth="2" /></svg>
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="歌名、歌手、专辑" aria-label="搜索曲库" maxLength={100} />
@@ -278,6 +282,40 @@ function ArtistPage({ name, devices, navigate }: { name: string; devices: Device
         </section>
       )}
       {tracks && tracks.length === 0 && <p className="muted">曲库里没有这位歌手的歌。</p>}
+    </article>
+  );
+}
+
+function MissingPage({ navigate }: { navigate: Nav }) {
+  useEffect(() => { keepNext = true; }, []);
+  const [songs, setSongs] = useState<Missing[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.missing().then((r) => setSongs(r.songs)).catch((e) => setError((e as ApiError).message)); }, []);
+  const lack = songs?.filter((s) => !s.owned) ?? [];
+  const owned = songs?.filter((s) => s.owned) ?? [];
+  const list = (of: Missing[]) => (
+    <ol className="tracks lacking">
+      {of.map((s) => (
+        <li key={`${s.title} ${s.artist} ${s.last_ms}`}>
+          <span className="track-name"><b>{s.title}</b><small>{s.artist || '没有歌手信息'}</small></span>
+          <span className="track-tech">{day(s.last_ms)}</span>
+          <span className="track-len"><span className="num">{s.plays}</span> 次</span>
+        </li>
+      ))}
+    </ol>
+  );
+  return (
+    <article className="artist">
+      <Back navigate={navigate} />
+      <header className="lack-head">
+        <div><h1>缺歌清单</h1><p>近 180 天从线上放过、曲库里还没有的歌。补进飞牛音乐并同步后，会自动划掉。</p></div>
+        {lack.length > 0 && <a className="btn" href="/api/library/missing.csv" download>导出表格</a>}
+      </header>
+      {error && <Notice tone="error" title={error} />}
+      {!songs && !error && <div className="boot"><span className="spinner" /></div>}
+      {songs && lack.length === 0 && <p className="muted">没有缺的歌。</p>}
+      {lack.length > 0 && list(lack)}
+      {owned.length > 0 && <section className="shelf"><h2>已经补上的</h2><div className="lack-owned">{list(owned)}</div></section>}
     </article>
   );
 }

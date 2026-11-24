@@ -8,7 +8,7 @@ name: trackferry
 
 services:
   trackferry:
-    image: madrays/trackferry:1.1.1
+    image: madrays/trackferry:latest
     container_name: trackferry
     restart: unless-stopped
 
@@ -37,6 +37,9 @@ services:
       - ./data:/data
       # 可选：不用飞牛音乐时，只读挂载一个音乐文件夹当曲库
       # - /vol1/1000/Music:/music:ro
+      # 可选：听过的线上歌放到别的盘（比如机械盘），不写就放在 data/cache。
+      # 只用它里面的 trackferry 文件夹，别的内容不动
+      # - /vol2/1000/Cache:/cache
 
     # 安全限制，保持不动：容器内文件只读、不允许提升权限。
     # 下面四项特权只在启动的一瞬间用：把 data 交给普通身份，再切换成它。之后程序不是 root，也没有任何特权

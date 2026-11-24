@@ -26,11 +26,12 @@ import (
 type Endpoints struct {
 	Account     string // https://account.xiaomi.com
 	Mina        string // https://api2.mina.mi.com
+	Miot        string // https://api.io.mi.com/app (Mi Home)
 	UserProfile string // https://userprofile.mina.mi.com (Xiao AI conversation records)
 }
 
 // DefaultEndpoints are Xiaomi's production services.
-var DefaultEndpoints = Endpoints{Account: "https://account.xiaomi.com", Mina: "https://api2.mina.mi.com", UserProfile: "https://userprofile.mina.mi.com"}
+var DefaultEndpoints = Endpoints{Account: "https://account.xiaomi.com", Mina: "https://api2.mina.mi.com", Miot: "https://api.io.mi.com/app", UserProfile: "https://userprofile.mina.mi.com"}
 
 const (
 	qrLoginSID = "mijia"   // sid used to obtain the QR code
@@ -281,13 +282,18 @@ func isTimeout(err error) bool {
 
 // Exchange trades a passToken for a Mina serviceToken.
 func (c *Client) Exchange(ctx context.Context, s Session) (Session, error) {
+	return c.exchange(ctx, s, minaSID)
+}
+
+// exchange trades a passToken for a serviceToken of one service.
+func (c *Client) exchange(ctx context.Context, s Session, sid string) (Session, error) {
 	cookies := map[string]string{"passToken": s.PassToken, "userId": s.UserID, "deviceId": s.DeviceID, "sdkVersion": sdkVersion}
 	if s.CUserID != "" {
 		cookies["cUserId"] = s.CUserID
 	}
-	resp, body, err := c.get(ctx, c.ep.Account+"/pass/serviceLogin?sid="+minaSID+"&_json=true", cookies, s.DeviceID)
+	resp, body, err := c.get(ctx, c.ep.Account+"/pass/serviceLogin?sid="+sid+"&_json=true", cookies, s.DeviceID)
 	if err != nil {
-		return s, errf(KindNetwork, "serviceLogin(%s): %v", minaSID, err)
+		return s, errf(KindNetwork, "serviceLogin(%s): %v", sid, err)
 	}
 	m, err := decodeAccountJSON(body)
 	if err != nil {
@@ -299,11 +305,11 @@ func (c *Client) Exchange(ctx context.Context, s Session) (Session, error) {
 		if n == codeLoginRefused {
 			return s, errf(KindAuth, "passToken rejected: code %d %s", n, str(m, "desc"))
 		}
-		return s, errf(KindUpstream, "serviceLogin(%s): code %d %s", minaSID, n, str(m, "desc"))
+		return s, errf(KindUpstream, "serviceLogin(%s): code %d %s", sid, n, str(m, "desc"))
 	}
 	location, ssecurity, nonce := str(m, "location"), str(m, "ssecurity"), str(m, "nonce")
 	if location == "" || ssecurity == "" || nonce == "" {
-		return s, errf(KindProtocol, "serviceLogin(%s) missing location, ssecurity or nonce", minaSID)
+		return s, errf(KindProtocol, "serviceLogin(%s) missing location, ssecurity or nonce", sid)
 	}
 	if uid := str(m, "userId"); uid != "" {
 		s.UserID = uid

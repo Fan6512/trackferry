@@ -18,9 +18,11 @@ import (
 	"time"
 
 	"trackferry/internal/auth"
+	"trackferry/internal/cache"
 	"trackferry/internal/config"
 	"trackferry/internal/feiniu"
 	"trackferry/internal/fscheck"
+	"trackferry/internal/home"
 	"trackferry/internal/library"
 	"trackferry/internal/live"
 	"trackferry/internal/observe"
@@ -52,9 +54,11 @@ type Options struct {
 	Engine        *takeover.Engine                                  // nil: no takeover in this server
 	Stream        *stream.Server                                    // serves /stream/ to speakers
 	Library       *library.Library
+	Cache         *cache.Cache // nil: online songs are not kept
 	Router        *routing.Router
 	Feiniu        *feiniu.Manager   // nil: no 飞牛音乐 in this server
 	Live          *live.Hub         // nil: no live view
+	Home          *home.Tracker     // nil: no endpoint for home automation
 	Update        *update.Checker   // nil: never looks for a newer release
 	SetupLog      func(code string) // prints the setup code where the owner finds it
 	Web           http.Handler      // embedded UI; nil serves nothing at /
@@ -155,10 +159,31 @@ func (s *Server) Handler() http.Handler {
 	authed("PATCH /api/commands/{id}", s.commandUpdate)
 	authed("POST /api/devices/{id}/takeover-test", s.takeoverTest)
 	authed("GET /api/takeover/runs", s.takeoverRuns)
+	if s.Engine != nil {
+		authed("POST /api/devices/{id}/control", s.control)
+		authed("GET /api/devices/{id}/control", s.controlState)
+	}
+	if s.Home != nil {
+		authed("GET /api/home", s.homeStatus)
+		authed("PUT /api/home", s.homeSwitch)
+		authed("POST /api/home/token", s.homeToken)
+		ha := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.haAuth(h)) }
+		ha("GET /api/ha/state", s.haState)
+		ha("GET /api/ha/events", s.haEvents)
+		if s.Engine != nil {
+			ha("POST /api/ha/speakers/{id}/control", s.control)
+		}
+		if s.Feiniu != nil && s.Library != nil {
+			ha("GET /api/ha/cover/{id}", s.cover)
+			ha("GET /api/ha/lyrics/{id}", s.haLyrics)
+		}
+	}
 	if s.Library != nil && s.Router != nil {
 		authed("GET /api/library", s.libraryStatus)
 		authed("GET /api/library/search", s.librarySearch)
 		authed("POST /api/library/scan", s.libraryScan)
+		authed("GET /api/library/missing", s.libraryMissing)
+		authed("GET /api/library/missing.csv", s.libraryMissingCSV)
 		authed("GET /api/library/shelf", s.libraryShelf)
 		authed("GET /api/library/albums/{id}", s.libraryAlbum)
 		authed("GET /api/library/artist", s.libraryArtist)
@@ -169,6 +194,11 @@ func (s *Server) Handler() http.Handler {
 		authed("GET /api/library/tracks/{id}/favorite", s.isFavorite)
 		authed("PUT /api/library/tracks/{id}/favorite", s.favorite)
 		authed("PATCH /api/sources/{name}", s.sourceUpdate)
+	}
+	if s.Cache != nil {
+		authed("GET /api/cache", s.cacheStatus)
+		authed("PUT /api/cache", s.cacheLimit)
+		authed("DELETE /api/cache", s.cacheClear)
 	}
 	if s.Feiniu != nil && s.Library != nil {
 		authed("GET /api/feiniu", s.feiniuStatus)
@@ -598,12 +628,17 @@ func (s *Server) deviceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("音箱　改了模式", "音箱", d.Name, "模式", d.Mode)
-	writeJSON(w, http.StatusOK, deviceView{d, s.takeoverAllowed(d)})
+	writeJSON(w, http.StatusOK, s.deviceView(d))
 }
 
 type deviceView struct {
 	store.Device
 	TakeoverAllowed bool `json:"takeover_allowed"`
+	CanWake         bool `json:"can_wake"`
+}
+
+func (s *Server) deviceView(d store.Device) deviceView {
+	return deviceView{d, s.takeoverAllowed(d), xiaomi.CanWake(d.Hardware, d.MiotDID)}
 }
 
 func (s *Server) takeoverAllowed(d store.Device) bool {
@@ -613,7 +648,7 @@ func (s *Server) takeoverAllowed(d store.Device) bool {
 func (s *Server) deviceViews(devs []store.Device) []deviceView {
 	out := []deviceView{}
 	for _, d := range devs {
-		out = append(out, deviceView{d, s.takeoverAllowed(d)})
+		out = append(out, s.deviceView(d))
 	}
 	return out
 }

@@ -163,7 +163,7 @@ export function FlowPage({ id, devices }: { id?: string; devices: Device[] }) {
             <ul className="flow-list">
               {stories.map((s) => {
                 const nat = !s.route || s.route.decision === 'native';
-                return <li key={s.key}><button type="button" aria-current={s.key === story?.key || undefined} onClick={() => { started.current = ''; setPicked(s.key); }}>{nat ? <span className="cover nat-cover"><SourceIcon name="xiaomi" /></span> : <Cover cover={s.route!.cover} title={s.route!.title ?? ''} artist={s.route!.artist} />}<span><b>{s.said}</b><small>{s.kind === 'try' ? '试一句' : s.kind === 'test' ? '试音' : s.kind === 'push' ? `曲库推到${s.device}` : s.device} <span className="num">{clock(s.seen).slice(0, 5)}</span></small></span></button></li>;
+                return <li key={s.key}><button type="button" aria-current={s.key === story?.key || undefined} onClick={() => { started.current = ''; setPicked(s.key); }}>{nat ? <span className="cover nat-cover"><SourceIcon name="xiaomi" /></span> : <Cover cover={s.route!.cover} title={s.route!.title ?? ''} artist={s.route!.artist} />}<span><b>{s.said}</b><small>{s.kind === 'try' ? '试一句' : s.kind === 'test' ? '试音' : s.kind === 'push' ? s.route?.list ? `连播${s.route.list} ${s.device}` : `曲库推到${s.device}` : s.device} <span className="num">{clock(s.seen).slice(0, 5)}</span></small></span></button></li>;
               })}
             </ul>
             <form className="ask" onSubmit={tryIt}>

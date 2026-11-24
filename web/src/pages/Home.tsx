@@ -29,6 +29,8 @@ interface Scene { key: string; said: string; asked?: string; route: Route | null
 const sceneOf = (c: Command, runs: TakeoverRun[]): Scene => ({ key: `c${c.id}`, said: c.query, route: c.route, command: c, run: runs.find((r) => r.kind === 'command' && r.command_id === c.id), device: c.device_name, deviceId: c.device_id, at: c.upstream_ms });
 const sceneOfPush = (r: TakeoverRun): Scene => ({ key: `r${r.id}`, said: '', route: pushed(r), run: r, device: r.device_name, deviceId: r.device_id, at: r.started_ms });
 
+const sentBy = (r: Route | null) => r?.list ? `连播${r.list}` : '从曲库推送';
+
 function title(s: Scene) {
   if (s.route && s.route.decision !== 'native' && s.route.title) return s.route.title;
   return s.asked || s.command?.intent_title || s.said;
@@ -245,7 +247,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
         <Ears devices={devices} value={ear} onChange={setEar} />
         <div className="raft" ref={raft}>{native && <Fish water mood={trying ? 'searching' : 'idle'} />}</div>
         <div className="words" key={scene?.key ?? 'none'}>
-          <p className="said">{scene ? <>{scene.said ? `“${scene.said}”` : '从曲库推送'}<span>{where}</span></> : <>对音箱说“小爱同学，播放晴天”</>}</p>
+          <p className="said">{scene ? <>{scene.said ? `“${scene.said}”` : sentBy(scene.route)}<span>{where}</span></> : <>对音箱说“小爱同学，播放晴天”</>}</p>
           <h1 style={{ '--n': Math.max(3, [...t].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.55 : 1), 0)) } as React.CSSProperties}>{t}</h1>
           {!scene && <button className="link say-link" onClick={() => navigate({ page: 'say' })}>看看都能怎么说</button>}
           {r && !native && <p className="by">{[singer(r.artist), singer(r.album)].filter(Boolean).join('　')}</p>}
@@ -322,7 +324,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
                       {nat ? <span className="cover nat-cover">{c.command?.intent_kind === 'favorite' ? <HeartMark /> : <SourceIcon name="xiaomi" />}</span> : <Cover cover={c.route!.cover} title={c.route!.title ?? c.said} artist={c.route!.artist} />}
                       <span className="log-main">
                         <b>{nat ? c.said : c.route!.title}</b>
-                        <small>{nat ? (c.route?.reason || '由小爱处理') : [singer(c.route!.artist), c.said ? `“${c.said}”` : '从曲库推送'].filter(Boolean).join('　')}</small>
+                        <small>{nat ? (c.route?.reason || '由小爱处理') : [singer(c.route!.artist), c.said ? `“${c.said}”` : sentBy(c.route)].filter(Boolean).join('　')}</small>
                       </span>
                       <span className="log-end"><i>{playing ? <span className="tag tag-ok">{phaseText[playing.phase]}</span> : out && out.tone !== 'ok' && out.text !== '已播放' && <span className={`tag tag-${out.tone}`}>{out.text}</span>}</i><span>{c.device}</span><b>{c.command?.intent_kind === 'favorite' ? '收藏' : <><SourceIcon name={nat ? 'xiaomi' : c.route!.source ?? 'library'} />{nat ? '小爱' : stopLabel[c.route!.source ?? 'library']}</>}</b></span>
                     </button>

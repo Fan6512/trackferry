@@ -51,6 +51,7 @@ type Song struct {
 	Album      string `json:"album,omitempty"`
 	Cover      string `json:"cover,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
+	List       string `json:"list,omitempty"` // the list it came up in, when one plays on
 }
 
 // StartRun inserts a run in state running and sets r.ID.
@@ -119,6 +120,36 @@ func (s *Store) Run(ctx context.Context, id int64) (TakeoverRun, error) {
 	return r, err
 }
 
+// OnlinePlay is one time a platform's song was heard on a speaker.
+type OnlinePlay struct {
+	Title, Artist string
+	AtMS          int64
+}
+
+// OnlinePlays lists the songs speakers played from a platform, newest first.
+func (s *Store) OnlinePlays(ctx context.Context) ([]OnlinePlay, error) {
+	rows, err := s.rd.QueryContext(ctx, `SELECT c.route, r.started_ms FROM takeover_runs r JOIN commands c ON c.id = r.command_id
+		WHERE r.outcome IN (?, ?) AND c.route <> '' ORDER BY r.id DESC`, OutcomeConfirmed, OutcomeFetched)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OnlinePlay{}
+	for rows.Next() {
+		var raw string
+		var p OnlinePlay
+		if err := rows.Scan(&raw, &p.AtMS); err != nil {
+			return nil, err
+		}
+		var rt struct{ Decision, Title, Artist string }
+		if json.Unmarshal([]byte(raw), &rt) == nil && rt.Decision == "online" && rt.Title != "" {
+			p.Title, p.Artist = rt.Title, rt.Artist
+			out = append(out, p)
+		}
+	}
+	return out, rows.Err()
+}
+
 // FailRunningRuns marks runs left "running" by a previous process as failed.
 func (s *Store) FailRunningRuns(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE takeover_runs SET outcome = ?, detail = 'TrackFerry 在接管途中重启', finished_ms = ? WHERE outcome = ?`,
@@ -176,6 +207,23 @@ func (s *Store) PendingVolumes(ctx context.Context) (map[string]int, error) {
 		out[id] = v
 	}
 	return out, rows.Err()
+}
+
+// ChangePendingVolume replaces the volume a muted speaker comes back to. It reports whether
+// one was waiting.
+func (s *Store) ChangePendingVolume(ctx context.Context, deviceID string, volume int) (bool, error) {
+	r, err := s.db.ExecContext(ctx, "UPDATE pending_volume SET volume = ? WHERE device_id = ?", volume, deviceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	return n > 0, err
+}
+
+// VolumeRestored forgets a volume that was put back, unless it was changed meanwhile.
+func (s *Store) VolumeRestored(ctx context.Context, deviceID string, volume int) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM pending_volume WHERE device_id = ? AND volume = ?", deviceID, volume)
+	return err
 }
 
 // ClearPendingVolume forgets a restored volume.

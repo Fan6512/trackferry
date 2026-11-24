@@ -24,7 +24,7 @@ const startLag = 500 * time.Millisecond
 // report a position for pushed audio; it continues the song after someone talked to Xiao AI;
 // and it stops the speaker once the song has played through, so it does not repeat. A newer
 // run on the speaker cancels the watch (and owns the speaker).
-func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
+func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) (how End) {
 	e, t := r.e, r.req.Track
 	tm := e.timing
 	if tm.Look <= 0 {
@@ -57,6 +57,8 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 		talkedUntil time.Time // someone talked; Xiao AI is done about then
 		silent      int       // status reads in a row without sound
 		foreign     int
+		silently    bool // waiting for a button to take effect, not for someone talking
+		soon        bool // look at the speaker at once
 		byUser      bool // the listener wants quiet
 		yield       bool // Xiao AI was asked to play something
 		pausedAt    time.Time
@@ -77,14 +79,55 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 		base, anchor, sounding, pausedAt = from, when, true, time.Time{}
 	}
 	over := func(step, why string) { r.phase = ""; r.step(step, true, why); r.status() }
+	// rest waits for a conversation over the end of the song and reports whether another song
+	// may follow.
+	rest := func() bool {
+		take := func(h Heard) {
+			switch {
+			case h.Control == "resume":
+			case h.Control != "" || h.Stop || h.Audio:
+				byUser = true
+			case h.Woke:
+				talkedUntil = e.now().Add(15 * time.Second)
+			default:
+				talkedUntil = h.At.Add(tm.Pause + min(45*time.Second, time.Duration(h.Answer)*tm.Speak))
+			}
+		}
+		for r.ctx.Err() == nil {
+			select {
+			case h := <-heard:
+				take(h)
+				continue
+			default:
+			}
+			left := talkedUntil.Sub(e.now())
+			if byUser || yield || talkedUntil.IsZero() || left <= 0 {
+				return !byUser && !yield
+			}
+			wait := time.NewTimer(left)
+			select {
+			case <-r.ctx.Done():
+			case <-wait.C:
+			case h := <-heard:
+				take(h)
+			}
+			wait.Stop()
+		}
+		return false
+	}
 	finish := func(why string) {
 		p, err := r.status()
-		if err == nil && !p.Playing() {
-			r.step(StepEnded, true, why+"，音箱已经停了")
-			return
-		}
 		if err == nil && r.foreign(p) {
 			r.step(StepEnded, true, why+"，音箱在放别的，不动它")
+			return
+		}
+		defer func() {
+			if rest() {
+				how = EndPlayed
+			}
+		}()
+		if err == nil && !p.Playing() {
+			r.step(StepEnded, true, why+"，音箱已经停了")
 			return
 		}
 		// Left alone the speaker would repeat the song for good.
@@ -152,6 +195,10 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 			}
 			timer.Reset(look)
 		}
+		if soon {
+			timer.Reset(tm.LookClose / 4)
+			soon = false
+		}
 		select {
 		case <-r.ctx.Done():
 			r.phase = ""
@@ -171,7 +218,12 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 			finish("音箱又从头放了")
 			return
 		case h := <-heard:
+			soon, silently = h.Button, h.Button
 			switch {
+			case h.Woke:
+				if !byUser { // if nothing is said to it, the song goes on
+					talkedUntil = e.now().Add(15 * time.Second)
+				}
 			case h.Control == "pause", h.Control == "stop", h.Stop:
 				byUser, talkedUntil = true, time.Time{}
 			case h.Control == "resume":
@@ -195,14 +247,14 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 
 		talking := !talkedUntil.IsZero() && e.now().Before(talkedUntil)
 		switch {
-		case talking:
+		case talking && !silently:
 			r.phase = phaseTalking
 		case sounding:
 			r.phase = phasePlaying
 		default:
 			r.phase = phasePaused
 		}
-		r.elapsed = at()
+		r.elapsed, r.held = at(), !sounding
 		p, err := r.status()
 		if err != nil {
 			continue
@@ -243,7 +295,7 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 				}
 				pause(when)
 				r.phase = phasePaused
-				if talking {
+				if talking && !silently {
 					r.phase = phaseTalking
 				}
 				r.elapsed = base

@@ -38,7 +38,7 @@ TrackFerry 让小爱音箱播放你 NAS 上的歌。说一句“播放潮汐来�
 <tr>
 <td width="33%" valign="top"><h3>🎵 飞牛曲库</h3>登录后同步歌曲、封面、歌词和收藏。也可以只读挂载音乐文件夹。</td>
 <td width="33%" valign="top"><h3>🌊 在线补歌</h3>曲库没有的歌，从酷我、酷狗、咪咕找免费完整版。每个来源都能单独关闭。</td>
-<td width="33%" valign="top"><h3>🗣️ 连续点歌</h3>“换成周杰伦的版本”“换个版本”“收藏这首歌”都能接上。听错一个字也能按曲库纠正。</td>
+<td width="33%" valign="top"><h3>🗣️ 连续点歌</h3>“换成周杰伦的版本”“换个版本”“收藏这首歌”都能接上。说“播放我的收藏”“播放某某歌单”，就随机一首接一首地放。听错一个字也能按曲库纠正。</td>
 </tr>
 <tr>
 <td valign="top"><h3>⏯️ 断点续播</h3>听歌时和小爱说话，说完从刚才的位置继续。说了暂停就停下。</td>
@@ -124,7 +124,7 @@ docker exec trackferry /trackferry setup-code
 
 “设置 → 关于”会提示新版本，点“更新”即可，起不来会自动退回。
 
-也可以用命令：先备份 `data`，再把 `compose.yaml` 中的镜像标签改成新版本号，执行：
+也可以用命令：先备份 `data`，再在 `compose.yaml` 所在目录执行：
 
 ```sh
 docker compose pull && docker compose up -d
@@ -153,6 +153,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | --- | --- |
 | 🚀 [部署教程](docs/deployment.md) | 🧭 [架构](docs/architecture.md) |
 | 🗣️ [使用说明](docs/usage.md) | 🔌 [接口](docs/api.md) |
+| 🏠 [接入 Home Assistant](docs/homeassistant.md) | 🎧 [音箱的三种模式](docs/usage.md#音箱的三种模式) |
 | ⚙️ [配置](docs/configuration.md) | 🤝 [参与贡献](CONTRIBUTING.md) |
 | 🩺 [问题排查](docs/troubleshooting.md) | 📝 [更新记录](CHANGELOG.md) |
 | 🔐 [隐私与安全](docs/security.md) | 💛 [致谢](docs/credits.md) |

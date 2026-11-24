@@ -6,7 +6,17 @@ var favoriteSongs = []string{"", "这首歌", "这首歌曲", "这首", "这个�
 
 // favorite recognises "收藏这首歌", "把这首歌加入收藏", "取消收藏". The order of the words
 // varies, the words themselves hardly do.
-func favorite(q string) (string, bool) {
+func favorite(q string) (Intent, bool) {
+	c, ok := kept(&q)
+	if ok {
+		return Intent{Kind: KindFavorite, Control: c, Follow: true}, true
+	}
+	return put(q)
+}
+
+// kept reads q without its polite words, which it removes.
+func kept(text *string) (string, bool) {
+	q := *text
 	q = strings.NewReplacer(" ", "", "一下", "").Replace(q)
 	for _, p := range []string{"给我", "帮我", "我要", "我想", "把", "将", "给"} {
 		q = strings.TrimPrefix(q, p)
@@ -14,6 +24,7 @@ func favorite(q string) (string, bool) {
 	for _, s := range []string{"起来", "下来", "了", "下"} {
 		q = strings.TrimSuffix(q, s)
 	}
+	*text = q
 	is := func(s string) bool {
 		for _, w := range favoriteSongs {
 			if s == w {

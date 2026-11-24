@@ -49,6 +49,7 @@ type Player struct {
 	Duration int64 `json:"duration"`
 	Volume   int   `json:"volume"`
 	Ours     bool  `json:"ours"`
+	Held     bool  `json:"held,omitempty"` // our clock stands still
 	// Elapsed is how far our song has played, by our own clock; speakers rarely report it.
 	Elapsed int64  `json:"elapsed"`
 	Phase   string `json:"phase,omitempty"` // playing | paused | talking | resuming
@@ -77,11 +78,12 @@ type Hub struct {
 	flows  []*Flow // oldest first
 	pulses map[string]Pulse
 	subs   map[chan []byte]struct{}
+	wakes  map[chan struct{}]struct{}
 }
 
 // New returns an empty Hub.
 func New() *Hub {
-	return &Hub{next: time.Now().UnixMilli(), pulses: map[string]Pulse{}, subs: map[chan []byte]struct{}{}}
+	return &Hub{next: time.Now().UnixMilli(), pulses: map[string]Pulse{}, subs: map[chan []byte]struct{}{}, wakes: map[chan struct{}]struct{}{}}
 }
 
 // Watching reports whether anyone is looking.
@@ -121,6 +123,14 @@ func encode(event string, v any) []byte {
 
 // send needs h.mu.
 func (h *Hub) send(event string, v any) {
+	if event == "flow" {
+		for ch := range h.wakes {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+	}
 	if len(h.subs) == 0 {
 		return
 	}
@@ -133,6 +143,32 @@ func (h *Hub) send(event string, v any) {
 			close(ch)
 		}
 	}
+}
+
+// Changes returns a channel that says some flow changed since it was last read.
+func (h *Hub) Changes() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.wakes[ch] = struct{}{}
+	return ch, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		delete(h.wakes, ch)
+	}
+}
+
+// Flows returns the flows as they are now, oldest first, without their layers.
+func (h *Hub) Flows() []Flow {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]Flow, 0, len(h.flows))
+	for _, f := range h.flows {
+		c := *f
+		c.Layers = nil
+		out = append(out, c)
+	}
+	return out
 }
 
 // Pulse reports one look at a speaker.

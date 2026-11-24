@@ -65,6 +65,10 @@ type Request struct {
 	Track      Track
 	Song       *store.Song // for a song sent from the library
 	Trace      *live.Trace // tells the web UI; optional
+	// Follows: our own last song just ended, so there is nothing to silence first.
+	Follows bool
+	// Ended is called once the run is over; optional.
+	Ended func(End)
 }
 
 // Timing tunes the loop; tests shorten it.
@@ -168,6 +172,13 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 
 	own := run // the goroutine's copy; the caller gets the snapshot below
 	go func() {
+		how := EndOther
+		if req.Ended != nil {
+			defer func() {
+				defer logx.Recover(e.log, "连播")
+				req.Ended(how)
+			}()
+		}
 		defer cancel()
 		d.run.Lock()
 		defer d.run.Unlock()
@@ -181,7 +192,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 			e.mu.Unlock()
 		}()
 		defer logx.Recover(e.log, "接管")
-		e.execute(runCtx, req, &own, released, heard, func() bool {
+		how = e.execute(runCtx, req, &own, released, heard, func() bool {
 			e.mu.Lock()
 			defer e.mu.Unlock()
 			return d.gen != gen
@@ -208,6 +219,8 @@ type Heard struct {
 	Audio   bool   // Xiao AI plays something in reply
 	Answer  int    // characters she says
 	Quiet   bool   // not worth a step of its own
+	Button  bool   // pressed, not said
+	Woke    bool   // the speaker was woken and listens
 	At      time.Time
 }
 
@@ -258,6 +271,7 @@ type runner struct {
 	mu      sync.Mutex
 	elapsed time.Duration
 	phase   string
+	held    bool // the song does not sound
 
 	saving bool // a write of the progress is on its way
 	dirty  bool // and there is more to write
@@ -326,7 +340,7 @@ func (r *runner) status() (xiaomi.PlayStatus, error) {
 	p, err := r.e.sp.PlayStatus(r.ctx, r.req.DeviceID)
 	if err == nil {
 		r.req.Trace.Player(live.Player{Status: p.Status, Position: p.Position, Duration: p.Duration, Volume: p.Volume,
-			Ours: p.Playing() && (p.AudioID == "" || p.AudioID == xiaomi.OurAudioID), Elapsed: r.elapsed.Milliseconds(), Phase: r.phase})
+			Ours: p.Playing() && (p.AudioID == "" || p.AudioID == xiaomi.OurAudioID), Held: r.held, Elapsed: r.elapsed.Milliseconds(), Phase: r.phase})
 	}
 	return p, err
 }
@@ -375,7 +389,7 @@ func (e *Engine) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRun, released <-chan struct{}, heard <-chan Heard, superseded func() bool, letGo func()) {
+func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRun, released <-chan struct{}, heard <-chan Heard, superseded func() bool, letGo func()) (how End) {
 	r := &runner{e: e, ctx: ctx, req: req, run: run, start: time.UnixMilli(run.StartedMS)}
 	defer r.settle()
 	finish := func(outcome, detail string) {
@@ -418,23 +432,11 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 		if superseded() {
 			return // the newer run keeps the mute and finds the volume to come back to
 		}
-		var err error
-		for i := 0; i < 3; i++ {
-			c, cancel := context.WithTimeout(bg, 6*time.Second)
-			err = e.sp.SetVolume(c, dev, volume)
-			cancel()
-			if err == nil {
-				break
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
-		if err == nil {
-			e.st.ClearPendingVolume(bg, dev)
-		}
-		r.step(StepRestore, err == nil, fmt.Sprintf("音量 %d %s", volume, describe(err)))
+		v, err := e.putBack(dev, volume)
+		r.step(StepRestore, err == nil, fmt.Sprintf("音量 %d %s", v, describe(err)))
 	}
 	defer restore()
-	if volume > 0 {
+	if volume > 0 && !req.Follows {
 		if err := e.st.SetPendingVolume(bg, dev, volume, e.now()); err != nil {
 			r.step(StepMute, false, "记不下原音量，不静音")
 		} else {
@@ -460,11 +462,13 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	}
 
 	// 3. Stop twice.
-	r.stop(StepStop1)
-	if e.sleep(ctx, e.timing.Settle) != nil || cancelled() {
-		return
+	if !req.Follows {
+		r.stop(StepStop1)
+		if e.sleep(ctx, e.timing.Settle) != nil || cancelled() {
+			return
+		}
+		r.stop(StepStop2)
 	}
-	r.stop(StepStop2)
 	if cancelled() {
 		return
 	}
@@ -487,14 +491,14 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 			return
 		}
 		finish(store.OutcomeFailed, "推送播放失败："+describe(err))
-		return
+		return EndUnplayed
 	}
 
 	// 5. Guard.
 	musicAPI := xiaomi.UsesMusicAPI(req.Hardware)
 	deadline := e.now().Add(e.timing.Guard)
 	var fetchedAt time.Time
-	confirmed := false
+	confirmed, left := false, false
 	replays := 0
 	pushed := e.now()
 	fast := e.timing.Poll / 2 // until it sounds: the mute lifts that much sooner
@@ -514,6 +518,7 @@ guard:
 			tick.Reset(fast / 2)
 			continue
 		case <-released:
+			left = true
 			r.step(StepReleased, true, "有新的口令交给小爱，不再守护")
 			break guard
 		case <-tick.C:
@@ -570,16 +575,45 @@ guard:
 		finish(store.OutcomeFetched, "音箱取了流，但播放状态没有确认")
 	default:
 		finish(store.OutcomeDispatched, "播放指令已受理，音箱没有来取流")
-		return
+		if left {
+			return EndOther
+		}
+		return EndUnplayed
 	}
-	r.watch(fetchedAt, heard)
+	how = r.watch(fetchedAt, heard)
 	req.Trace.Done("")
+	return how
 }
 
 // refused reports that a speaker or Xiaomi certainly did not do what it was asked.
 func refused(err error) bool {
 	var de *xiaomi.DeviceError
 	return errors.As(err, &de) || errors.Is(err, xiaomi.ErrNotLinked) || errors.Is(err, xiaomi.ErrUnauthorized)
+}
+
+// putBack gives a muted speaker its volume again: the one it had, or what was asked for
+// since (Engine.SetVolume).
+func (e *Engine) putBack(dev string, volume int) (int, error) {
+	bg := context.Background()
+	var err error
+	for i := 0; i < 3; i++ {
+		v, pending, _ := e.st.PendingVolume(bg, dev)
+		if !pending {
+			v = volume
+		}
+		c, cancel := context.WithTimeout(bg, 6*time.Second)
+		err = e.sp.SetVolume(c, dev, v)
+		cancel()
+		if volume = v; err != nil {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		e.st.VolumeRestored(bg, dev, v)
+		if _, changed, _ := e.st.PendingVolume(bg, dev); !changed {
+			break
+		}
+	}
+	return volume, err
 }
 
 // hold marks a speaker's volume as being looked after and returns what ends that.

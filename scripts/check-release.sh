@@ -17,8 +17,7 @@ field() { node -p "const p=JSON.parse(require('fs').readFileSync('$1','utf8')); 
 [ "$(field web/package-lock.json p.version)" = "$v" ] || fail "web/package-lock.json 的版本不是 $v"
 [ "$(field web/package-lock.json "p.packages[''].version")" = "$v" ] || fail "web/package-lock.json 根包的版本不是 $v"
 images="$(sed -n 's/^ *image: *madrays\/trackferry://p' compose.yaml compose.bridge.yaml | sort -u)"
-[ "$images" = "$v" ] || fail "compose.yaml 和 compose.bridge.yaml 的镜像标签必须全部是 $v（现在：${images//$'\n'/ }）"
-grep -q "madrays/trackferry:latest" compose.yaml && fail "compose.yaml 不能用 latest"
+[ "$images" = latest ] || fail "compose.yaml 和 compose.bridge.yaml 的镜像标签必须全部是 latest（现在：${images//$'\n'/ }）"
 grep -Eq "^## \[${v//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || fail "CHANGELOG.md 缺少一行：## [$v] - YYYY-MM-DD"
 [ -n "$(scripts/release-notes.sh "$v" 2>/dev/null)" ] || fail "CHANGELOG.md 的 $v 没有内容"
 

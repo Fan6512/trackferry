@@ -16,9 +16,6 @@ grep -Eq "^## \[${v//./\\.}\] " CHANGELOG.md || {
 }
 printf '%s\n' "$v" > VERSION
 (cd web && npm version "$v" --no-git-tag-version --allow-same-version >/dev/null)
-for f in compose.yaml compose.bridge.yaml; do
-  sed "s#madrays/trackferry:[0-9][0-9.]*#madrays/trackferry:$v#" "$f" > "$f.new" && mv "$f.new" "$f"
-done
 
 scripts/check-release.sh
 (cd web && npm ci --no-audit --no-fund && npm test && npm run build)
@@ -29,7 +26,7 @@ msg="$(git rev-parse --git-path RELEASE_MSG)"
 cat > "$msg" <<MSG
 发布：$v
 
-版本号、镜像标签和更新记录统一为 $v。
+版本号和更新记录统一为 $v。
 这一版的改动见 CHANGELOG.md 的对应小节。
 MSG
 

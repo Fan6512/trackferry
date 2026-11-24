@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { api, ApiError, type Device, type Mode, type WatchStatus } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, ApiError, type Device, type Mode, type Press, type WatchStatus } from '../api';
 import { deviceSubtitle, deviceTitle, isOnline, modeHint, modeLabel } from '../copy';
 
 const modes: Mode[] = ['off', 'observe', 'takeover'];
@@ -80,6 +80,7 @@ export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?
             : <span className="off-dot">已不在账号中</span>}
           <span>{deviceSubtitle(device)}</span>
         </p>
+        {device.in_account && device.mode !== 'off' && <Buttons device={device} />}
         <ModeSwitch device={device} onChange={onChange} />
         <p className="speaker-hint">
           {device.in_account ? modeHint[device.mode] : '设置会保留，重新绑定后恢复。'}
@@ -87,5 +88,70 @@ export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?
         </p>
       </div>
     </li>
+  );
+}
+
+const draw = (d: string, fill = true) => <svg viewBox="0 0 24 24" width="20" height="20" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d={d} /></svg>;
+const icons = {
+  play: draw('M8 5.2v13.6L19 12z'), pause: draw('M7 5h3.6v14H7zM13.4 5H17v14h-3.6z'), stop: draw('M6.5 6.5h11v11h-11z'),
+  wake: draw('M12 4a2.6 2.6 0 0 1 2.6 2.6v4.8a2.6 2.6 0 0 1-5.2 0V6.6A2.6 2.6 0 0 1 12 4zM6 11.5a6 6 0 0 0 12 0M12 17.5V21', false),
+  volume: draw('M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11', false),
+};
+
+/** Play, pause, stop, wake and volume. */
+function Buttons({ device }: { device: Device }) {
+  const id = device.device_id;
+  const [now, setNow] = useState<{ state: string; volume: number | null } | null>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  const [busy, setBusy] = useState<Press | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const again = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const alive = useRef(true);
+  const load = useCallback(async () => {
+    try { const s = await api.controls(id); if (alive.current) setNow(s); } catch { /* the buttons work without it */ }
+  }, [id]);
+  useEffect(() => {
+    alive.current = true;
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, 8000);
+    return () => { alive.current = false; clearInterval(t); clearTimeout(again.current); };
+  }, [load]);
+  const press = async (action: Press, volume?: number) => {
+    setBusy(action);
+    setError(null);
+    setSaid(null);
+    try {
+      await api.press(id, action, volume);
+      if (action === 'wake') setSaid('已唤醒，直接说话就行');
+      if (volume !== undefined) setNow((n) => ({ state: n?.state ?? 'idle', volume }));
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally {
+      setBusy(null);
+      setDrag(null);
+      clearTimeout(again.current);
+      again.current = setTimeout(load, 900); // what was pressed takes a moment
+    }
+  };
+  const commit = () => { if (drag !== null && drag !== now?.volume) press('volume', drag); else setDrag(null); };
+  const button = (a: Press, label: string) => <button type="button" className="ctl" onClick={() => press(a)} disabled={busy !== null} title={label} aria-label={`${deviceTitle(device)}${label}`}>{busy === a ? <span className="spinner spinner-tiny" /> : icons[a as keyof typeof icons]}</button>;
+  const volume = drag ?? now?.volume ?? null;
+  return (
+    <div className="ctls">
+      <div className="ctl-row">
+        {now?.state === 'playing' ? button('pause', '暂停') : button('play', '播放')}
+        {button('stop', '停止')}
+        {device.can_wake && button('wake', '唤醒')}
+        <label className="ctl-vol">
+          {icons.volume}
+          <input type="range" min={0} max={100} value={volume ?? 0} disabled={volume === null || busy !== null} aria-label={`${deviceTitle(device)}音量`}
+            onChange={(e) => setDrag(Number(e.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
+          <small className="num">{volume ?? '–'}</small>
+        </label>
+      </div>
+      {error && <p className="field-error" role="alert">{error}</p>}
+      {said && <p className="ctl-said" role="status">{said}</p>}
+    </div>
   );
 }

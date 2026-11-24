@@ -4,6 +4,9 @@
 export interface UpdateStatus { enabled: boolean; current: string; latest?: string; newer: boolean; url?: string; notes?: string; published?: string; checked_ms?: number; error?: string;
   proxy?: string; installable?: boolean; failed?: string; install?: { phase: 'download' | 'check' | 'restart'; done?: number; total?: number; error?: string } }
 
+export interface HomeStatus { enabled: boolean; has_token: boolean; connected: number }
+export type Press = 'play' | 'pause' | 'stop' | 'volume' | 'wake';
+
 export type Mode = 'off' | 'observe' | 'takeover';
 
 export interface Device {
@@ -20,6 +23,8 @@ export interface Device {
   in_account: boolean;
   /** config.yaml permits choosing takeover for this speaker. */
   takeover_allowed: boolean;
+  /** Wake can be pressed from here. */
+  can_wake: boolean;
 }
 
 export type SyncOutcome = 'ok' | 'empty' | 'relink_required' | 'error';
@@ -85,7 +90,7 @@ export interface Command {
   prev_poll_ms: number;
   seen_ms: number;
   stale: boolean;
-  intent_kind: 'song' | 'version' | 'favorite' | 'artist' | 'random' | 'control';
+  intent_kind: 'song' | 'version' | 'favorite' | 'list' | 'artist' | 'random' | 'control';
   intent_title?: string;
   intent_artist?: string;
   intent_control?: string;
@@ -130,6 +135,7 @@ export interface Route {
   duration_ms?: number;
   /** Other singers of the same title in the library. */
   others?: string[];
+  list?: string;
   /** What the decision rests on. */
   basis?: { name: string; text: string }[];
   layers: Layer[];
@@ -204,6 +210,10 @@ export interface LibraryStatus {
   progress?: ScanReport;
 }
 
+/** A song played from a platform. */
+export interface Missing { title: string; artist: string; plays: number; last_ms: number; owned: boolean }
+export interface CacheStatus { mounted: boolean; limit_mb: number; bytes: number; songs: number }
+
 export interface SourceHealth {
   source: 'kuwo' | 'kugou' | 'migu';
   enabled: boolean;
@@ -253,7 +263,7 @@ export interface RunStep {
 
 export interface Guide { verbs: string[]; polite: string[]; tails: string[]; not_music: string[]; controls: Record<string, string[]>; yes: Example[]; no: Example[] }
 export interface Example { say: string; then: string; kind: string }
-export type Reading = Intent & { verb?: string; word?: string; why: 'song' | 'artist' | 'random' | 'control' | 'version' | 'favorite' | 'no_verb' | 'not_music' | 'empty' };
+export type Reading = Intent & { verb?: string; word?: string; why: 'song' | 'artist' | 'random' | 'control' | 'version' | 'favorite' | 'list' | 'no_verb' | 'not_music' | 'empty' };
 
 export interface TakeoverRun {
   id: number;
@@ -261,7 +271,7 @@ export interface TakeoverRun {
   device_name: string;
   command_id?: number;
   kind: 'test' | 'command' | 'push';
-  song?: { track_id: number; title: string; artist: string; album?: string; cover?: string; duration_ms?: number };
+  song?: { track_id: number; title: string; artist: string; album?: string; cover?: string; duration_ms?: number; list?: string };
   source: string;
   started_ms: number;
   upstream_ms?: number;
@@ -366,11 +376,20 @@ export const api = {
   discoverFeiniu: () => request<{ servers: FeiniuServer[]; blocked: string[]; relay: boolean }>('GET', '/api/feiniu/discover'),
   unlinkFeiniu: () => request<FeiniuInfo>('DELETE', '/api/feiniu'),
   searchLibrary: (q: string) => request<{ tracks: Track[] | null }>('GET', `/api/library/search?q=${encodeURIComponent(q)}`),
+  missing: () => request<{ songs: Missing[] }>('GET', '/api/library/missing'),
+  cache: () => request<CacheStatus>('GET', '/api/cache'),
+  setCache: (limit_mb: number) => request<CacheStatus>('PUT', '/api/cache', { limit_mb }),
+  clearCache: () => request<CacheStatus>('DELETE', '/api/cache'),
   scanLibrary: () => request<{ started: boolean }>('POST', '/api/library/scan'),
   guide: () => request<Guide>('GET', '/api/intent'),
   explain: (text: string) => request<Reading>('POST', '/api/intent', { text }),
   tryRoute: (text: string) => request<{ intent: Intent; route: Route }>('POST', '/api/route/try', { text }),
   setSource: (name: string, enabled: boolean) => request<{ sources: SourceHealth[] }>('PATCH', `/api/sources/${name}`, { enabled }),
+  press: (id: string, action: Press, volume?: number) => request<void>('POST', `/api/devices/${encodeURIComponent(id)}/control`, { action, volume }),
+  controls: (id: string) => request<{ state: 'playing' | 'paused' | 'idle'; volume: number | null }>('GET', `/api/devices/${encodeURIComponent(id)}/control`),
+  home: () => request<HomeStatus>('GET', '/api/home'),
+  setHome: (enabled: boolean) => request<HomeStatus>('PUT', '/api/home', { enabled }),
+  homeToken: () => request<{ token: string }>('POST', '/api/home/token'),
   setMode: (id: string, mode: Mode) => request<Device>('PATCH', `/api/devices/${encodeURIComponent(id)}`, { mode }),
 };
 

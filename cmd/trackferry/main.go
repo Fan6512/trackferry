@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"syscall"
 	"time"
 	_ "time/tzdata" // the runtime image has no zoneinfo
@@ -20,9 +22,11 @@ import (
 
 	"trackferry/internal/api"
 	"trackferry/internal/auth"
+	"trackferry/internal/cache"
 	"trackferry/internal/config"
 	"trackferry/internal/feiniu"
 	"trackferry/internal/fscheck"
+	"trackferry/internal/home"
 	"trackferry/internal/intent"
 	"trackferry/internal/library"
 	"trackferry/internal/live"
@@ -91,12 +95,39 @@ func main() {
 // given away, whatever a configuration file says.
 const dataMount = "/data"
 
+// cacheMount is where the kept online songs go when a folder was mounted for them. The image
+// has no /cache, so the folder above exists only then.
+const cacheMount = "/cache/trackferry"
+
+func isDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.IsDir()
+}
+
+// openCache uses the mounted folder if it can be written, else the data folder.
+func openCache(data string, limitMB int, log *slog.Logger) (*cache.Cache, error) {
+	dir := filepath.Join(data, "cache")
+	if isDir(filepath.Dir(cacheMount)) {
+		c, err := cache.Open(dir, cacheMount, limitMB, log)
+		if err == nil {
+			return c, nil
+		}
+		log.Warn("缓存　挂载的目录不能写，这次放在 data/cache", "目录", filepath.Dir(cacheMount), "原因", err,
+			"解决", fmt.Sprintf("给身份 %d:%d 写权限，然后重启容器", os.Getuid(), os.Getgid()))
+	}
+	return cache.Open(dir, "", limitMB, log)
+}
+
 // drop leaves root behind, after handing over the folders the command is the owner of.
 func drop(cmd string) error {
 	var dirs []string
 	switch cmd {
 	case "serve":
 		dirs = []string{dataMount, filepath.Dir(relay.Socket)}
+		if os.Geteuid() == 0 && isDir(filepath.Dir(cacheMount)) { // never the mount itself: it may hold other things
+			os.Mkdir(cacheMount, 0o700)
+			dirs = append(dirs, cacheMount)
+		}
 	case "relay":
 		dirs = []string{filepath.Dir(relay.Socket)}
 	}
@@ -247,6 +278,12 @@ func serve() error {
 	sources := online.New(log, client, &online.Kuwo{Client: client}, &online.Kugou{Client: client}, &online.Migu{Client: client})
 	router := &routing.Router{Library: lib, Online: sources, Log: log, Openable: streams.Openable}
 	router.LoadSettings(ctx, st)
+	kept, err := openCache(cfg.DataDir, cacheLimit(ctx, st), log)
+	if err != nil {
+		log.Warn("缓存　打不开，这次不用", "原因", err)
+	} else {
+		router.Cached = kept.Find
+	}
 	speakerName := func(id string) string {
 		d, err := st.Device(ctx, id)
 		if err != nil {
@@ -262,12 +299,34 @@ func serve() error {
 			name := speakerName(id)
 			return name != "" && cfg.TakeoverAllowed(name)
 		},
-		Open: func(rt *routing.Route) stream.Opener { return sources.Opener(rt.Found()) }}
+		Open: func(rt *routing.Route) stream.Opener {
+			if kept == nil {
+				return sources.Opener(rt.Found())
+			}
+			return kept.Opener(rt.Found(), sources.Opener(rt.Found()))
+		},
+		Keep: func(rt *routing.Route) {
+			if kept == nil {
+				return
+			}
+			defer logx.Recover(log, "缓存")
+			kctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			if err := kept.Keep(kctx, rt.Found(), rt.Asked(), sources.Opener(rt.Found())); err != nil && ctx.Err() == nil {
+				log.Warn("缓存　没有存下", "音频", rt.Label()) // the error may carry the address
+			}
+		}}
 	obs := observe.New(xm, st, log, time.Second)
 	obs.Live = hub
 	dispatcher.Favorite = func(ctx context.Context, id int64, on bool) error {
 		_, err := lib.SetFavorite(ctx, id, on)
 		return err
+	}
+	router.Lists = fn
+	dispatcher.Next, dispatcher.Put = router.Next, router.Put
+	played := func(dev, title, artist string, track int64) {
+		dispatcher.Drop(dev) // a song sent by hand ends a list
+		dispatcher.Remember(dev, title, artist, track)
 	}
 	obs.Follows = dispatcher.Follows
 	obs.OnCommand(dispatcher.OnCommand)
@@ -288,10 +347,24 @@ func serve() error {
 		checker.Installer = &update.Installer{Data: cfg.DataDir, Backup: st.Backup, Restart: func() { close(restart) }}
 	}
 	go checker.Run(ctx)
+	atHome := home.New(home.Source{Hub: hub, Devices: st.Devices, Pending: st.PendingVolumes, Status: xm.PlayStatus,
+		Colors: func(ctx context.Context, id string) []string {
+			resp, err := fn.Cover(ctx, id, "160")
+			if err != nil {
+				return nil
+			}
+			defer resp.Body.Close()
+			pic, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			if err != nil {
+				return nil
+			}
+			return home.Colors(pic)
+		}}, log, home.DefaultCadence)
+	go atHome.Run(ctx)
 	srv := api.New(api.Options{
 		Config: cfg, Store: st, Token: token, SetupCodePath: setupCodePath,
 		Build: api.Build{Version: version, Commit: commit}, Boot: boot,
-		Xiaomi: xm, Observer: obs, Engine: engine, Stream: streams, Library: lib, Router: router, Feiniu: fn, Live: hub, Played: dispatcher.Remember, Web: webui.Handler(), Log: log, Update: checker, SetupLog: showCode,
+		Xiaomi: xm, Observer: obs, Engine: engine, Stream: streams, Library: lib, Cache: kept, Router: router, Feiniu: fn, Live: hub, Home: atHome, Played: played, Web: webui.Handler(), Log: log, Update: checker, SetupLog: showCode,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
@@ -445,4 +518,13 @@ func healthcheck() error {
 		return fmt.Errorf("live check: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// cacheLimit is the cache's limit in MB as set on the settings page.
+func cacheLimit(ctx context.Context, st *store.Store) int {
+	v, err := st.Setting(ctx, api.SettingCache)
+	if n, e := strconv.Atoi(v); err == nil && e == nil && n >= 0 && n <= cache.MaxMB {
+		return n
+	}
+	return cache.DefaultMB
 }

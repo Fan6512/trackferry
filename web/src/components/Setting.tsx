@@ -21,3 +21,4 @@ export function Setting({ id, icon, title, says, light, state, actions, children
 const draw = (d: ReactNode) => <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
 export const LockIcon = () => draw(<><rect x="5" y="10.5" width="14" height="9.5" rx="2" /><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5M12 14.5v2" /></>);
 export const WavesIcon = () => draw(<path d="M3 8.5c3-2.4 6-2.4 9 0s6 2.4 9 0M3 15.5c3-2.4 6-2.4 9 0s6 2.4 9 0" />);
+export const HouseIcon = () => draw(<path d="M4 11.5 12 4.5l8 7M6 10v9.5h12V10M12 19.5v-5M9 12.5l3 2 3-2" />);

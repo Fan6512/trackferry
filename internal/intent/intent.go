@@ -16,7 +16,8 @@ const (
 	KindRandom   = "random"   // "play some music"
 	KindControl  = "control"  // pause, next, ...
 	KindVersion  = "version"  // the song just asked for, by someone else
-	KindFavorite = "favorite" // the song just asked for goes into the favourites; Control is add or remove
+	KindFavorite = "favorite" // the song just asked for goes into the favourites or a playlist; Control says how
+	KindList     = "list"     // a list of 飞牛音乐, one song after another; Control says which
 	KindNone     = ""         // not a music command: handed to Xiao AI, not stored
 )
 
@@ -25,7 +26,7 @@ type Intent struct {
 	Kind    string `json:"kind"`
 	Title   string `json:"title,omitempty"`
 	Artist  string `json:"artist,omitempty"`
-	Control string `json:"control,omitempty"` // pause | resume | next | previous | stop; add | remove
+	Control string `json:"control,omitempty"` // pause | resume | next | previous | stop; add | remove | list_add | list_remove; favorites | playlist
 	// Follow: only means something right after a song.
 	Follow bool `json:"follow,omitempty"`
 }
@@ -71,8 +72,11 @@ func Parse(query string) Intent {
 	if c, ok := controls[q]; ok {
 		return Intent{Kind: KindControl, Control: c}
 	}
-	if c, ok := favorite(q); ok {
-		return Intent{Kind: KindFavorite, Control: c, Follow: true}
+	if in, ok := favorite(q); ok {
+		return in
+	}
+	if in, ok := list(q); ok {
+		return in
 	}
 	if v, ok := version(q); ok {
 		return v

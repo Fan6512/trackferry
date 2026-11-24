@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, type Account as AccountT, type LinkResult, type UpdateStatus } from '../api';
 import { Notice } from '../components/Notice';
 import { FeiniuCard } from '../components/Feiniu';
+import { HomeAssistant } from '../components/HomeAssistant';
 import { LockIcon, Setting, type Light } from '../components/Setting';
 import { SourceIcon } from '../components/SourceIcon';
 import { Sources } from '../components/Sources';
@@ -12,7 +13,7 @@ import fish from '../assets/brand/fish-mark.webp';
 import word from '../assets/brand/wordmark.svg';
 import './settings.css';
 
-const parts = [['feiniu', '飞牛音乐'], ['xiaomi', '小米账号'], ['sources', '线上音源'], ['password', '管理密码'], ['about', '关于']] as const;
+const parts = [['feiniu', '飞牛音乐'], ['xiaomi', '小米账号'], ['sources', '线上音源'], ['home', 'Home Assistant'], ['password', '管理密码'], ['about', '关于']] as const;
 type Part = (typeof parts)[number][0];
 
 export function Account({ account, build, startScanning, onChanged, onLogout }: {
@@ -53,6 +54,7 @@ export function Account({ account, build, startScanning, onChanged, onLogout }: 
   const [lights, setLights] = useState<Partial<Record<Part, Light>>>({});
   const feiniuLight = useCallback((l: Light) => setLights((x) => ({ ...x, feiniu: l })), []);
   const sourceLight = useCallback((l: Light) => setLights((x) => ({ ...x, sources: l })), []);
+  const homeLight = useCallback((l: Light) => setLights((x) => ({ ...x, home: l })), []);
   const aboutLight = useCallback((l: Light | null) => setLights((x) => ({ ...x, about: l ?? undefined })), []);
   const mine: Light = !account.linked ? 'warn' : account.relink_required ? 'bad' : 'ok';
   const [at, setAt] = useState<Part>('feiniu');
@@ -110,6 +112,7 @@ export function Account({ account, build, startScanning, onChanged, onLogout }: 
       </Setting>
 
       <Sources onLight={sourceLight} />
+      <HomeAssistant onLight={homeLight} />
       <PasswordCard onLogout={onLogout} />
       <About build={build} onLight={aboutLight} />
       </div>
@@ -188,7 +191,7 @@ function About({ build, onLight }: { build: { version: string; commit: string };
           <h3><b className="num">{up.latest}</b>{up.published && <small>{new Date(up.published).toLocaleDateString('zh-CN')}发布</small>}{up.url && <a href={up.url} target="_blank" rel="noreferrer">更新说明</a>}</h3>
           {up.notes && <pre className="st-notes">{up.notes.replace(/^#+ +/gm, '').replace(/^[-*] +/gm, '· ')}</pre>}
           <Install up={up} running={build.version} onStatus={setUp} />
-          <div><p>{up.installable && '也可以用命令更新：'}把 compose.yaml 里的镜像标签改成 <span className="num">{up.latest}</span>，再执行下面的命令，数据不受影响：</p><pre>docker compose pull &amp;&amp; docker compose up -d</pre></div>
+          <div><p>{up.installable && '也可以用命令更新：'}在 compose.yaml 所在目录执行下面的命令，数据不受影响。镜像写了固定版本号的，先改成 latest 或 <span className="num">{up.latest}</span>：</p><pre>docker compose pull &amp;&amp; docker compose up -d</pre></div>
         </div>
       )}
     </section>

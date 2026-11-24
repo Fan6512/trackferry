@@ -1,7 +1,7 @@
 import { flushSync } from 'react-dom';
 
 export type Page = 'welcome' | 'home' | 'flow' | 'say' | 'library' | 'speakers' | 'account';
-export interface Place { page: Page; kind?: 'album' | 'artist'; id?: string }
+export interface Place { page: Page; kind?: 'album' | 'artist' | 'missing'; id?: string }
 
 const pages: Page[] = ['welcome', 'home', 'flow', 'say', 'library', 'speakers', 'account'];
 
@@ -12,13 +12,14 @@ export function readPlace(): Place | null {
   if (page === 'library' && (kind === 'album' || kind === 'artist') && rest.length) {
     try { return { page, kind, id: decodeURIComponent(rest.join('/')) }; } catch { return { page }; }
   }
+  if (page === 'library' && kind === 'missing') return { page, kind };
   if (page === 'flow' && /^r?\d+$/.test(kind ?? '')) return { page, id: kind };
   return { page };
 }
 
 export function href(p: Place) {
   if (p.page === 'flow' && p.id) return `#/flow/${p.id}`;
-  return `#/${p.page}${p.kind ? `/${p.kind}/${encodeURIComponent(p.id ?? '')}` : ''}`;
+  return `#/${p.page}${p.kind === 'missing' ? '/missing' : p.kind ? `/${p.kind}/${encodeURIComponent(p.id ?? '')}` : ''}`;
 }
 
 type VT = Document & { startViewTransition?: (f: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };
