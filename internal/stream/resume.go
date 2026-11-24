@@ -342,13 +342,20 @@ func (s *Server) middle(w http.ResponseWriter, r *http.Request, it *item) {
 	h := int64(len(it.head))
 	var body io.Reader = bytes.NewReader(nil)
 	if to >= h {
-		src, _, err := it.source(r.Context(), it.off+max(0, from-h), it.off+to-h)
+		sctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		src, srcTotal, err := it.source(sctx, it.off+max(0, from-h), it.off+to-h)
 		if err != nil {
 			http.Error(w, "source unavailable", http.StatusBadGateway)
 			return
 		}
 		defer src.Close()
 		body = src
+		if it.open != nil {
+			st := &steady{ctx: r.Context(), total: srcTotal, open: it.open, body: src, cancel: cancel, off: it.off + max(0, from-h), end: it.off + to - h + 1, note: s.reopened(it)}
+			defer st.Close()
+			body = st
+		}
 	}
 	if from < h {
 		body = io.MultiReader(bytes.NewReader(it.head[from:]), body)

@@ -8,11 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -71,6 +73,7 @@ type Library struct {
 
 	mu      sync.RWMutex
 	idx     *index
+	loaded  bool // idx is what the database holds
 	running bool
 	seen    int
 	cur     *Report
@@ -92,7 +95,7 @@ func (l *Library) Load(ctx context.Context) error {
 	}
 	idx := newIndex(rows)
 	l.mu.Lock()
-	l.idx = idx
+	l.idx, l.loaded = idx, true
 	l.mu.Unlock()
 	return nil
 }
@@ -110,22 +113,43 @@ func (l *Library) Run(ctx context.Context, every time.Duration) {
 	if err := l.Load(ctx); err != nil {
 		l.log.Warn("曲库　索引读不出来", "原因", err)
 	}
+	failed := 0
 	for {
 		sctx, cancel := context.WithCancel(ctx)
 		l.mu.Lock()
 		l.cancel = cancel
 		l.mu.Unlock()
-		if err := l.Scan(sctx); err != nil && sctx.Err() == nil {
+		wait := every
+		if err := l.guarded(sctx); err != nil && sctx.Err() == nil {
 			l.log.Warn("曲库　同步失败", "原因", err)
+			// 飞牛 may simply not be up yet: it starts along with us.
+			wait = min(every, retryAfter<<min(failed, 6))
+			failed++
+		} else {
+			failed = 0
 		}
 		cancel()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(every):
+		case <-time.After(wait):
 		case <-l.trigger:
 		}
 	}
+}
+
+// retryAfter is the wait after a first failed scan; it doubles with every further one.
+const retryAfter = time.Minute
+
+// guarded is Scan, except that a fault in it is an error.
+func (l *Library) guarded(ctx context.Context) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("程序出错：%v", p)
+			l.log.Error("曲库　程序出错", "原因", fmt.Sprint(p), "位置", string(debug.Stack()))
+		}
+	}()
+	return l.Scan(ctx)
 }
 
 // Rescan asks Run to scan now. It reports false when a scan is already running.
@@ -186,6 +210,14 @@ func (l *Library) Scan(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	l.mu.RLock()
+	loaded := l.loaded
+	l.mu.RUnlock()
+	if !loaded { // a scan cut short wrote what is not in memory yet
+		if err := l.Load(ctx); err != nil {
+			return err
+		}
+	}
 	rep := &Report{StartedMS: started.UnixMilli(), Source: "files", Roots: []RootReport{}}
 	l.mu.Lock()
 	l.running, l.seen, l.cur = true, 0, rep
@@ -201,6 +233,7 @@ func (l *Library) Scan(ctx context.Context) (err error) {
 		rep.FinishedMS = time.Now().UnixMilli()
 		if err != nil {
 			state, rep.Error = "failed", err.Error()
+			l.loaded = false
 		}
 		raw, _ := json.Marshal(rep)
 		l.running, l.cur, l.last = false, nil, rep

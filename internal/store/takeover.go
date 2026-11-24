@@ -94,7 +94,7 @@ func (s *Store) Runs(ctx context.Context, limit int) ([]TakeoverRun, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 20
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` ORDER BY r.id DESC LIMIT ?`, limit)
+	rows, err := s.rd.QueryContext(ctx, `SELECT `+runCols+` ORDER BY r.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (s *Store) Runs(ctx context.Context, limit int) ([]TakeoverRun, error) {
 
 // Run returns one takeover run.
 func (s *Store) Run(ctx context.Context, id int64) (TakeoverRun, error) {
-	r, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runCols+` WHERE r.id = ?`, id))
+	r, err := scanRun(s.rd.QueryRowContext(ctx, `SELECT `+runCols+` WHERE r.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -152,7 +152,7 @@ func (s *Store) SetPendingVolume(ctx context.Context, deviceID string, volume in
 // PendingVolume returns the volume waiting to be restored on a speaker.
 func (s *Store) PendingVolume(ctx context.Context, deviceID string) (int, bool, error) {
 	var v int
-	err := s.db.QueryRowContext(ctx, "SELECT volume FROM pending_volume WHERE device_id = ?", deviceID).Scan(&v)
+	err := s.rd.QueryRowContext(ctx, "SELECT volume FROM pending_volume WHERE device_id = ?", deviceID).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -161,7 +161,7 @@ func (s *Store) PendingVolume(ctx context.Context, deviceID string) (int, bool, 
 
 // PendingVolumes lists every speaker still waiting for its volume back.
 func (s *Store) PendingVolumes(ctx context.Context) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT device_id, volume FROM pending_volume")
+	rows, err := s.rd.QueryContext(ctx, "SELECT device_id, volume FROM pending_volume")
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func (s *Store) ClearPendingVolume(ctx context.Context, deviceID string) error {
 
 // Device returns one speaker.
 func (s *Store) Device(ctx context.Context, id string) (Device, error) {
-	d, err := scanDevice(s.db.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	d, err := scanDevice(s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
 		FROM devices WHERE device_id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound

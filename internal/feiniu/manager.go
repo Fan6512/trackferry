@@ -210,6 +210,25 @@ func (m *Manager) note(c *client, err error) {
 	}
 }
 
+// Run looks again whether a login that was refused works after all: 飞牛音乐 also refuses
+// while it starts.
+func (m *Manager) Run(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if st := m.Status(); st.Linked && st.Expired {
+			c, cancel := context.WithTimeout(ctx, 15*time.Second)
+			m.Songs(c, 1, 1)
+			cancel()
+		}
+	}
+}
+
 // Songs reads one page of the library.
 func (m *Manager) Songs(ctx context.Context, page, size int) ([]Song, int, error) {
 	c, err := m.client()

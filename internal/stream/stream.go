@@ -417,7 +417,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, it *item) {
-	resp, err := it.open(r.Context(), r.Header.Get("Range"))
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	resp, err := openAgain(ctx, it.open, r.Header.Get("Range"))
 	if err != nil {
 		if s.Log != nil && r.Context().Err() == nil {
 			s.Log.Warn("音频　来源中断", "音频", it.h.Label) // the error may carry the address
@@ -433,9 +435,44 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, it *item) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	if r.Method != http.MethodHead {
-		n, err := io.Copy(w, resp.Body)
+		body := io.Reader(resp.Body)
+		if st := s.steady(r.Context(), it, resp, cancel); st != nil {
+			defer st.Close()
+			body = st
+		}
+		n, err := io.Copy(w, body)
 		if s.Log != nil {
 			s.Log.Info("音频　传完", "音频", it.h.Label, "字节", n, "完整", err == nil)
+		}
+	}
+}
+
+// steady wraps a response so it survives its source breaking off; nil when the response does
+// not say which bytes it holds.
+func (s *Server) steady(ctx context.Context, it *item, resp *http.Response, cancel context.CancelFunc) *steady {
+	st := &steady{ctx: ctx, open: it.open, body: resp.Body, cancel: cancel, note: s.reopened(it)}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if resp.ContentLength <= 0 {
+			return nil
+		}
+		st.end, st.total = resp.ContentLength, resp.ContentLength
+	case http.StatusPartialContent:
+		var last int64
+		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &st.off, &last, &st.total); err != nil {
+			return nil
+		}
+		st.end = last + 1
+	default:
+		return nil
+	}
+	return st
+}
+
+func (s *Server) reopened(it *item) func(int64) {
+	return func(off int64) {
+		if s.Log != nil {
+			s.Log.Warn("音频　来源断了，已接着读", "音频", it.h.Label, "从字节", off)
 		}
 	}
 }

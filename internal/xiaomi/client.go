@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,6 +37,8 @@ const (
 	minaSID    = "micoapi" // sid whose serviceToken the Mina API accepts
 	sdkVersion = "3.8.6"
 	jsonPrefix = "&&&START&&&"
+
+	codeLoginRefused = 70016
 	// ServiceTokenLifetime is how long a Mina serviceToken is assumed valid.
 	ServiceTokenLifetime = 12 * time.Hour
 )
@@ -51,8 +54,24 @@ type Client struct {
 func NewClient(ep Endpoints) *Client {
 	return &Client{ep: ep, http: &http.Client{
 		Timeout:       40 * time.Second,
+		Transport:     transport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+}
+
+// transport keeps connections warm for several speakers read every second, and notices a
+// connection that silently died (router restart, changed line) instead of waiting on it.
+func transport() *http.Transport {
+	return &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         (&net.Dialer{Timeout: 4 * time.Second, KeepAlive: 15 * time.Second}).DialContext,
+		TLSHandshakeTimeout: 4 * time.Second,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        32,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+		HTTP2:               &http.HTTP2Config{SendPingTimeout: 5 * time.Second, PingTimeout: 3 * time.Second},
+	}
 }
 
 // Session is everything needed to call Mina APIs and renew access.
@@ -276,7 +295,11 @@ func (c *Client) Exchange(ctx context.Context, s Session) (Session, error) {
 	}
 	if n := code(m); n != 0 {
 		// 70016 means the passToken no longer authenticates: the user must scan again.
-		return s, errf(KindAuth, "passToken rejected: code %d %s", n, str(m, "desc"))
+		// Anything else is the account service's own trouble and may pass.
+		if n == codeLoginRefused {
+			return s, errf(KindAuth, "passToken rejected: code %d %s", n, str(m, "desc"))
+		}
+		return s, errf(KindUpstream, "serviceLogin(%s): code %d %s", minaSID, n, str(m, "desc"))
 	}
 	location, ssecurity, nonce := str(m, "location"), str(m, "ssecurity"), str(m, "nonce")
 	if location == "" || ssecurity == "" || nonce == "" {

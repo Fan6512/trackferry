@@ -22,7 +22,7 @@ export function Speakers({ account, devices, takeoverSupported, onDevices, onRes
   useEffect(() => {
     const load = () => api.observer().then(setObs).catch(() => {});
     load();
-    const t = setInterval(load, 4000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 4000);
     return () => clearInterval(t);
   }, []);
 

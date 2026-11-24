@@ -110,7 +110,7 @@ func (s *Store) SyncDevices(ctx context.Context, found []DiscoveredDevice, now t
 
 // Devices lists all known speakers, those still in the account first.
 func (s *Store) Devices(ctx context.Context) ([]Device, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	rows, err := s.rd.QueryContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
 		FROM devices ORDER BY in_account DESC, name, device_id`)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func (s *Store) SetDeviceMode(ctx context.Context, id, mode string) (Device, err
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Device{}, ErrNotFound
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
+	row := s.rd.QueryRowContext(ctx, `SELECT device_id, name, alias, model, hardware, miot_did, presence, mode, first_seen_at, last_seen_at, in_account
 		FROM devices WHERE device_id = ?`, id)
 	d, err := scanDevice(row)
 	if errors.Is(err, sql.ErrNoRows) {

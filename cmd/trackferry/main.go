@@ -211,6 +211,7 @@ func serve() error {
 		}
 		return func(ctx context.Context, rng string) (*http.Response, error) { return fn.Open(ctx, t.GUID, rng) }, "." + ext
 	}
+	go fn.Run(ctx)
 	go lib.Run(ctx, 6*time.Hour)
 	client := online.Client()
 	sources := online.New(log, client, &online.Kuwo{Client: client}, &online.Kugou{Client: client}, &online.Migu{Client: client})

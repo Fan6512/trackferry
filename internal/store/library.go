@@ -47,7 +47,7 @@ func (s *Store) Tracks(ctx context.Context) ([]TrackRow, error) {
 }
 
 func (s *Store) tracksPage(ctx context.Context, after int64, out *[]TrackRow) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+trackCols+` WHERE id > ? ORDER BY id LIMIT 2000`, after)
+	rows, err := s.rd.QueryContext(ctx, `SELECT `+trackCols+` WHERE id > ? ORDER BY id LIMIT 2000`, after)
 	if err != nil {
 		return 0, err
 	}
@@ -112,7 +112,7 @@ func (s *Store) DropUnseen(ctx context.Context, scanID int64, root string) (int6
 
 // DropRootsExcept removes the tracks of roots that no longer exist in the music directory.
 func (s *Store) DropRootsExcept(ctx context.Context, roots []string) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT root FROM tracks`)
+	rows, err := s.rd.QueryContext(ctx, `SELECT DISTINCT root FROM tracks`)
 	if err != nil {
 		return err
 	}
@@ -140,13 +140,22 @@ func (s *Store) DropRootsExcept(ctx context.Context, roots []string) error {
 	return nil
 }
 
-// DropAllUnseen removes every track the scan did not see, whatever its root.
-func (s *Store) DropAllUnseen(ctx context.Context, scanID int64) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tracks WHERE scan_id <> ?`, scanID)
-	if err != nil {
-		return 0, err
+// DropTracks removes tracks by ID.
+func (s *Store) DropTracks(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
 	}
-	return res.RowsAffected()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tracks WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // DropRemote removes the tracks of 飞牛音乐.
@@ -177,7 +186,7 @@ func (s *Store) FinishScan(ctx context.Context, id int64, state, report string, 
 // LastScan returns the newest finished scan's report JSON ("" when there is none).
 func (s *Store) LastScan(ctx context.Context) (string, error) {
 	var r string
-	err := s.db.QueryRowContext(ctx, `SELECT report FROM library_scans WHERE state <> 'running' AND report <> '{}' ORDER BY id DESC LIMIT 1`).Scan(&r)
+	err := s.rd.QueryRowContext(ctx, `SELECT report FROM library_scans WHERE state <> 'running' AND report <> '{}' ORDER BY id DESC LIMIT 1`).Scan(&r)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -187,7 +196,7 @@ func (s *Store) LastScan(ctx context.Context) (string, error) {
 // Setting reads a setting ("" when unset).
 func (s *Store) Setting(ctx context.Context, key string) (string, error) {
 	var v string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	err := s.rd.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

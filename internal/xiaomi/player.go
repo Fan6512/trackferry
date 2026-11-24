@@ -231,16 +231,32 @@ func (m *Manager) withSession(ctx context.Context, f func(Session) error) error 
 	if !errors.Is(err, ErrUnauthorized) {
 		return err
 	}
-	m.syncMu.Lock()
-	defer m.syncMu.Unlock()
-	if cur := m.session(); cur != nil && cur.ServiceToken != s.ServiceToken {
-		return f(*cur)
+	ns, rerr := m.fresher(ctx, s)
+	if rerr != nil {
+		return rerr
 	}
-	ns, err := m.renew(ctx, s)
-	if err != nil {
-		return err
+	if ns == nil {
+		return err // just renewed: another token would be refused as well
 	}
 	return f(*ns)
+}
+
+// fresher returns a session newer than the refused s, or nil when s is itself brand new.
+func (m *Manager) fresher(ctx context.Context, s *Session) (*Session, error) {
+	m.syncMu.Lock()
+	defer m.syncMu.Unlock()
+	if cur := m.session(); cur == nil {
+		return nil, ErrNotLinked
+	} else if cur.ServiceToken != s.ServiceToken {
+		return cur, nil
+	}
+	if time.Since(m.renewed) < renewPause {
+		return nil, nil
+	}
+	// The renewal serves every speaker, so it outlives the one impatient read that began it.
+	c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 25*time.Second)
+	defer cancel()
+	return m.renew(c, s)
 }
 
 // PlayStatus reads a speaker's player state.

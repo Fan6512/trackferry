@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"trackferry/internal/feiniu"
@@ -28,13 +29,13 @@ func (l *Library) sync(ctx context.Context, id int64, rep *Report, known map[str
 	l.mu.Unlock()
 	roots := map[string]int{}
 	got, total := 0, 0
+	seen := make(map[string]bool, len(known))
 	for page := 1; ; page++ {
 		songs, n, err := l.Remote.Songs(ctx, page, pageSize)
 		if err != nil {
 			return err
 		}
 		var changed []store.TrackRow
-		var seen []int64
 		l.mu.Lock()
 		total, rep.Total = n, n
 		for _, s := range songs {
@@ -54,16 +55,17 @@ func (l *Library) sync(ctx context.Context, id int64, rep *Report, known map[str
 			rep.Roots[i].Tracks++
 			old := known[t.Path]
 			t.ID = old.ID
-			if old.ID != 0 && old == t {
-				seen = append(seen, old.ID)
-			} else {
+			seen[t.Path] = true
+			if old.ID == 0 || old != t {
 				changed = append(changed, t)
 				rep.Added++
 			}
 		}
 		l.mu.Unlock()
-		if err := l.st.SaveTracks(ctx, id, changed, seen); err != nil {
-			return err
+		if len(changed) > 0 {
+			if err := l.st.SaveTracks(ctx, id, changed, nil); err != nil {
+				return err
+			}
 		}
 		if len(songs) < pageSize || got >= total {
 			break
@@ -72,13 +74,26 @@ func (l *Library) sync(ctx context.Context, id int64, rep *Report, known map[str
 	if got < total {
 		return fmt.Errorf("飞牛音乐说有 %d 首，只读到 %d 首", total, got)
 	}
-	n, err := l.st.DropAllUnseen(ctx, id)
-	if err != nil {
-		return err
+	var n int64
+	var gone []int64
+	for p, t := range known {
+		if !seen[p] {
+			gone = append(gone, t.ID)
+		}
+	}
+	for part := range slices.Chunk(gone, 500) {
+		if err := l.st.DropTracks(ctx, part); err != nil {
+			return err
+		}
+		n += int64(len(part))
 	}
 	l.mu.Lock()
 	rep.Removed = n
+	same := rep.Added == 0 && n == 0
 	l.mu.Unlock()
+	if same {
+		return nil // the index in memory is this one
+	}
 	return l.Load(ctx)
 }
 

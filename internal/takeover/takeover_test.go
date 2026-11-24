@@ -34,6 +34,7 @@ type fakeSpeaker struct {
 	speakErr error
 	statusOK bool
 	playHook func()
+	volHook  func(v int) error // an answer that got lost: the volume is set all the same
 }
 
 func newSpeaker() *fakeSpeaker {
@@ -72,6 +73,9 @@ func (f *fakeSpeaker) SetVolume(_ context.Context, _ string, v int) error {
 	f.log("volume")
 	f.volume = v
 	f.volumes = append(f.volumes, v)
+	if f.volHook != nil {
+		return f.volHook(v)
+	}
 	return nil
 }
 
@@ -302,7 +306,7 @@ func TestRecoverVolumesAfterCrash(t *testing.T) {
 	ctx := context.Background()
 	sp.volume = 0
 	st.SetPendingVolume(ctx, "d1", 55, time.Now())
-	e.RecoverVolumes(ctx)
+	e.recoverOnce(ctx)
 	if sp.volume != 55 {
 		t.Fatalf("volume %d", sp.volume)
 	}
@@ -520,4 +524,161 @@ func TestAPausedSongIsLeftAlone(t *testing.T) {
 	sp.playing = ""
 	sp.mu.Unlock()
 	time.Sleep(300 * time.Millisecond)
+}
+
+func TestLostMuteAnswerStillRestores(t *testing.T) {
+	e, sp, _ := setup(t)
+	sp.volHook = func(v int) error {
+		if v == 0 {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
+	e.Run(context.Background(), req(sp))
+	if sp.volume != 40 {
+		t.Fatalf("left at %d", sp.volume)
+	}
+}
+
+func TestFailedRestoreIsMadeUpDuringTheSong(t *testing.T) {
+	e, sp, st := setup(t)
+	fails := 3
+	sp.volHook = func(v int) error {
+		if v > 0 && fails > 0 {
+			fails--
+			sp.volume = 0
+			return errors.New("lost")
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { e.Run(ctx, req(sp)); close(done) }()
+	defer func() { cancel(); <-done }()
+	for i := 0; ; i++ {
+		e.recoverOnce(context.Background())
+		all, _ := st.PendingVolumes(context.Background())
+		sp.mu.Lock()
+		ok := sp.volume == 40 && fails == 0 && len(all) == 0
+		sp.mu.Unlock()
+		if ok {
+			break
+		}
+		if i > 300 {
+			t.Fatal("still muted")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRecoveryLeavesHeldSpeakersAlone(t *testing.T) {
+	e, sp, st := setup(t)
+	sp.volume = 0
+	st.SetPendingVolume(context.Background(), "d1", 55, time.Now())
+	done := e.hold("d1")
+	e.recoverOnce(context.Background())
+	if sp.volume != 0 {
+		t.Fatal("unmuted under a run")
+	}
+	done()
+	e.recoverOnce(context.Background())
+	if sp.volume != 55 {
+		t.Fatal(sp.volume)
+	}
+}
+
+func TestSupersededRunDoesNotUnmuteInBetween(t *testing.T) {
+	e, sp, st := setup(t)
+	ctx := context.Background()
+	if _, err := e.Start(ctx, req(sp)); err != nil {
+		t.Fatal(err)
+	}
+	wait := func(what string, f func() bool) {
+		t.Helper()
+		for i := 0; i < 500; i++ {
+			sp.mu.Lock()
+			ok := f()
+			sp.mu.Unlock()
+			if ok {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatal(what)
+	}
+	wait("mute", func() bool { return len(sp.volumes) > 0 })
+	e.Start(ctx, req(sp))
+	wait("restore", func() bool { return sp.volume == 40 })
+	for i, v := range sp.volumes[:len(sp.volumes)-1] {
+		if v != 0 {
+			t.Fatalf("unmuted in between: %d %v", i, sp.volumes)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if all, _ := st.PendingVolumes(ctx); len(all) != 0 {
+		t.Fatal(all)
+	}
+}
+
+func TestPushIsRepeatedWhenTheSpeakerNeverComes(t *testing.T) {
+	e, sp, _ := setup(t)
+	sp.fetchOK = false
+	n := 0
+	sp.playHook = func() {
+		if n++; n == 2 {
+			sp.fetchOK = true
+		}
+	}
+	// the first push is lost: nothing plays afterwards
+	lost := true
+	e.sp = prompt{lossy{sp, &lost}}
+	run, _ := e.Run(context.Background(), req(sp))
+	if run.Outcome != store.OutcomeConfirmed || !strings.Contains(steps(run), StepReplay) {
+		t.Fatalf("%s %s", run.Outcome, steps(run))
+	}
+}
+
+func TestPushIsRetriedAfterAnError(t *testing.T) {
+	e, sp, _ := setup(t)
+	sp.playErr = errors.New("connection reset")
+	sp.playHook = func() {
+		if strings.Count(strings.Join(sp.calls, ","), "play") > 1 {
+			sp.playErr = nil
+		}
+	}
+	run, _ := e.Run(context.Background(), req(sp))
+	if run.Outcome != store.OutcomeConfirmed {
+		t.Fatalf("%s %s", run.Outcome, steps(run))
+	}
+}
+
+// lossy accepts the first push without playing it.
+type lossy struct {
+	*fakeSpeaker
+	lost *bool
+}
+
+func (l lossy) PlayURL(ctx context.Context, a, b, c string) error {
+	err := l.fakeSpeaker.PlayURL(ctx, a, b, c)
+	if *l.lost {
+		*l.lost = false
+		l.mu.Lock()
+		l.playing = ""
+		l.mu.Unlock()
+	}
+	return err
+}
+
+func TestPanicInARunLeavesNothingMutedOrBusy(t *testing.T) {
+	e, sp, _ := setup(t)
+	sp.playHook = func() { sp.playHook = nil; sp.mu.Unlock(); defer sp.mu.Lock(); panic("boom") }
+	e.Start(context.Background(), req(sp))
+	for i := 0; i < 300 && (e.Playing("d1") || e.held("d1")); i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if e.Playing("d1") || e.held("d1") || sp.volume != 40 {
+		t.Fatalf("playing %v volume %d", e.Playing("d1"), sp.volume)
+	}
 }

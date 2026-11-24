@@ -87,8 +87,13 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 			r.step(StepEnded, true, why+"，音箱在放别的，不动它")
 			return
 		}
-		e.sp.PlayerOp(r.ctx, r.req.DeviceID, "pause")
-		err = e.sp.PlayerOp(r.ctx, r.req.DeviceID, "stop")
+		// Left alone the speaker would repeat the song for good.
+		for i := 0; i < 4; i++ {
+			e.sp.PlayerOp(r.ctx, r.req.DeviceID, "pause")
+			if err = e.sp.PlayerOp(r.ctx, r.req.DeviceID, "stop"); err == nil || e.sleep(r.ctx, time.Duration(i+1)*time.Second) != nil {
+				break
+			}
+		}
 		r.step(StepEnded, err == nil, why+"，停止循环 "+describe(err))
 	}
 	// again pushes the song from where it stopped.
@@ -104,7 +109,11 @@ func (r *runner) watch(fetchedAt time.Time, heard <-chan Heard) {
 			start = 0
 			n = Track{URL: t.URL, Lost: t.Lost}
 		}
-		if err := e.sp.PlayURL(r.ctx, r.req.DeviceID, r.req.Hardware, n.URL); err != nil {
+		err = e.sp.PlayURL(r.ctx, r.req.DeviceID, r.req.Hardware, n.URL)
+		for i := 0; err != nil && i < 3 && e.sleep(r.ctx, time.Duration(i+1)*400*time.Millisecond) == nil; i++ {
+			err = e.sp.PlayURL(r.ctx, r.req.DeviceID, r.req.Hardware, n.URL)
+		}
+		if err != nil {
 			r.step(StepResume, false, describe(err))
 			return false
 		}

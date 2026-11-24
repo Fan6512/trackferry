@@ -12,10 +12,16 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"trackferry/internal/logx"
 )
 
 // renewAfter is when a serviceToken is renewed, well inside its lifetime.
 const renewAfter = ServiceTokenLifetime - 2*time.Hour
+
+// renewPause is left between renewals that fail, and between one that worked and the next
+// one a refusal asks for.
+const renewPause = 20 * time.Second
 
 // DeviceSink receives the account's device list after a successful fetch.
 type DeviceSink func(ctx context.Context, devices []Device) error
@@ -90,6 +96,9 @@ type Manager struct {
 	pw       *pwLogin
 	pwMu     sync.Mutex // serialises password login steps
 	syncMu   sync.Mutex // serialises syncs and token renewals
+	tried    time.Time  // last renewal that failed; with syncMu
+	triedErr error
+	renewed  time.Time // last renewal that worked; with syncMu
 }
 
 // NewManager loads credentials from path (data/private/xiaomi.json) if present.
@@ -318,6 +327,9 @@ func (m *Manager) link(ctx context.Context, s Session) (SyncInfo, error) {
 	m.mu.Lock()
 	m.sess, m.relink = &s, false
 	m.mu.Unlock()
+	m.syncMu.Lock()
+	m.triedErr = nil
+	m.syncMu.Unlock()
 	m.log.Info("小米　已关联", "账号", maskUserID(s.UserID))
 	return m.Sync(ctx), nil
 }
@@ -334,21 +346,32 @@ func (m *Manager) session() *Session {
 
 // renew exchanges the passToken for a fresh serviceToken. Callers hold syncMu.
 func (m *Manager) renew(ctx context.Context, s *Session) (*Session, error) {
+	// Every speaker asks at once when the token lapses; the account service is asked once.
+	if m.triedErr != nil && time.Since(m.tried) < renewPause {
+		return nil, m.triedErr
+	}
 	ns, err := m.client.Exchange(ctx, *s)
 	if err != nil {
+		if ctx.Err() == nil {
+			m.tried, m.triedErr = time.Now(), err
+		}
 		if KindOf(err) == KindAuth {
 			m.mu.Lock()
-			m.relink = true
+			if m.sess != nil && m.sess.PassToken == s.PassToken {
+				m.relink = true
+			}
 			m.mu.Unlock()
 		}
 		return nil, err
 	}
+	m.triedErr, m.renewed = nil, time.Now()
+	// A full disk must not stop the speakers: the token works until the next start.
 	if err := m.save(&ns); err != nil {
-		return nil, err
+		m.log.Warn("小米　新的登录没有存上", "原因", err)
 	}
 	m.mu.Lock()
 	if m.sess != nil && m.sess.UserID == ns.UserID {
-		m.sess = &ns
+		m.sess, m.relink = &ns, false
 	}
 	m.mu.Unlock()
 	m.log.Info("小米　登录已续期")
@@ -378,7 +401,10 @@ func (m *Manager) sync(ctx context.Context) SyncInfo {
 	if s == nil {
 		return fail(SyncRelinkRequired, errf(KindAuth, "no Xiaomi account is linked"))
 	}
-	if time.Since(s.ObtainedAt) > renewAfter {
+	m.mu.Lock()
+	relink := m.relink
+	m.mu.Unlock()
+	if time.Since(s.ObtainedAt) > renewAfter || relink {
 		ns, err := m.renew(ctx, s)
 		if err != nil {
 			if KindOf(err) == KindAuth {
@@ -435,24 +461,39 @@ func (m *Manager) sync(ctx context.Context) SyncInfo {
 // Run renews the serviceToken before it lapses and re-syncs devices periodically.
 func (m *Manager) Run(ctx context.Context) {
 	if m.session() != nil {
-		m.Sync(ctx)
+		m.guarded(func() { m.Sync(ctx) })
 	}
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for i := 1; ; i++ {
+		// A sync that failed (the NAS starts before its network does) is not left for an hour.
+		var soon <-chan time.Time
+		if st := m.Status(); st.Linked && st.LastSync != nil && st.LastSync.Outcome == SyncError {
+			soon = time.After(time.Minute)
+		}
+		late := false
 		select {
 		case <-ctx.Done():
 			return
+		case <-soon:
+			late = true
 		case <-t.C:
 		}
 		s := m.session()
 		if s == nil {
 			continue
 		}
-		if time.Since(s.ObtainedAt) > renewAfter || i%6 == 0 {
-			m.Sync(ctx) // Sync renews the token when it is close to expiry
+		// A login taken for expired is tried again now and then: it may work after all.
+		if late || m.Status().RelinkRequired || time.Since(s.ObtainedAt) > renewAfter || i%6 == 0 {
+			m.guarded(func() { m.Sync(ctx) }) // Sync renews the token when it is close to expiry
 		}
 	}
+}
+
+// guarded keeps a fault in one round from ending the process.
+func (m *Manager) guarded(f func()) {
+	defer logx.Recover(m.log, "小米")
+	f()
 }
 
 // ErrNotLinked means there is no usable Xiaomi login.

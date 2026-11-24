@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 	"unicode/utf8"
+
+	"trackferry/internal/logx"
 )
 
 // Playing reports that a song of ours is on the speaker, sounding or paused.
@@ -19,7 +21,12 @@ func (e *Engine) Playing(deviceID string) bool {
 // the work is still finished, but nothing is spoken any more.
 func (e *Engine) Say(ctx context.Context, deviceID string, work func() string) error {
 	text := make(chan string, 1)
-	go func() { text <- work() }()
+	go func() {
+		said := ""
+		defer func() { text <- said }() // a fault in the work must not leave the speaker hushed
+		defer logx.Recover(e.log, "接管")
+		said = work()
+	}()
 	e.mu.Lock()
 	gen, ours := 0, false
 	if d := e.devs[deviceID]; d != nil {
@@ -30,12 +37,14 @@ func (e *Engine) Say(ctx context.Context, deviceID string, work func() string) e
 	if ours {
 		// The watch must wait for us, however long the work takes.
 		e.Hear(deviceID, Heard{Answer: 60, Quiet: true})
+		letGo := e.hold(deviceID)
+		defer letGo()
 		restore = e.hush(ctx, deviceID, gen)
 	}
 	said := <-text
 	restore()
 	err := ctx.Err()
-	if err == nil {
+	if err == nil && said != "" {
 		err = e.sp.Speak(ctx, deviceID, said)
 	}
 	n := 0

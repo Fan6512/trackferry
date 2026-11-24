@@ -21,7 +21,7 @@ type AdminCredential struct {
 // AdminCredential returns the admin password hash, or ErrNotFound before setup.
 func (s *Store) AdminCredential(ctx context.Context) (AdminCredential, error) {
 	var c AdminCredential
-	err := s.db.QueryRowContext(ctx, "SELECT password_hash, salt, iterations FROM admin WHERE id = 1").
+	err := s.rd.QueryRowContext(ctx, "SELECT password_hash, salt, iterations FROM admin WHERE id = 1").
 		Scan(&c.Hash, &c.Salt, &c.Iterations)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
@@ -56,7 +56,7 @@ func (s *Store) CreateSession(ctx context.Context, token string, expires time.Ti
 // SessionValid reports whether token names an unexpired session.
 func (s *Store) SessionValid(ctx context.Context, token string, now time.Time) (bool, error) {
 	var exp string
-	err := s.db.QueryRowContext(ctx, "SELECT expires_at FROM sessions WHERE token_hash = ?", hashToken(token)).Scan(&exp)
+	err := s.rd.QueryRowContext(ctx, "SELECT expires_at FROM sessions WHERE token_hash = ?", hashToken(token)).Scan(&exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

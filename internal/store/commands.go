@@ -72,7 +72,7 @@ func (s *Store) Commands(ctx context.Context, deviceID string, before int64, lim
 		limit = 50
 	}
 	q := `SELECT ` + commandCols + ` WHERE (? = '' OR c.device_id = ?) AND (? = 0 OR c.id < ?) ORDER BY c.id DESC LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, q, deviceID, deviceID, before, before, limit)
+	rows, err := s.rd.QueryContext(ctx, q, deviceID, deviceID, before, before, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (s *Store) SetNativeNote(ctx context.Context, id int64, note string) (Comma
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Command{}, ErrNotFound
 	}
-	c, err := scanCommand(s.db.QueryRowContext(ctx, `SELECT `+commandCols+` WHERE c.id = ?`, id))
+	c, err := scanCommand(s.rd.QueryRowContext(ctx, `SELECT `+commandCols+` WHERE c.id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Command{}, ErrNotFound
 	}
@@ -117,6 +117,31 @@ func (s *Store) PruneCommands(ctx context.Context, cutoff time.Time) (int64, err
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// Prune deletes what nobody looks at any more: commands and runs before cutoff, all but the
+// newest scans, and all starts but the first and the newest. It returns how many rows went.
+func (s *Store) Prune(ctx context.Context, cutoff time.Time) (int64, error) {
+	total, err := s.PruneCommands(ctx, cutoff)
+	if err != nil {
+		return total, err
+	}
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{"DELETE FROM takeover_runs WHERE started_ms < ?", []any{cutoff.UnixMilli()}},
+		{"DELETE FROM library_scans WHERE id <= (SELECT MAX(id) FROM library_scans) - 50", nil},
+		{"DELETE FROM boots WHERE id > (SELECT MIN(id) FROM boots) AND id <= (SELECT MAX(id) FROM boots) - 500", nil},
+	} {
+		res, err := s.db.ExecContext(ctx, q.sql, q.args...)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
 }
 
 func scanCommand(r scanner) (Command, error) {

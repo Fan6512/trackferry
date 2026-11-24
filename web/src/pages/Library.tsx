@@ -118,7 +118,7 @@ function Front({ devices, navigate }: { devices: Device[]; navigate: Nav }) {
       }
     };
     load();
-    const t = setInterval(load, running ? 1500 : 30000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, running ? 1500 : 30000);
     return () => { on = false; clearInterval(t); };
   }, [running]);
 

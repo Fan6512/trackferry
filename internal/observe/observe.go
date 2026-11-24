@@ -20,6 +20,7 @@ import (
 
 	"trackferry/internal/intent"
 	"trackferry/internal/live"
+	"trackferry/internal/logx"
 	"trackferry/internal/store"
 	"trackferry/internal/xiaomi"
 )
@@ -128,17 +129,30 @@ func (o *Observer) Status() Status {
 	return out
 }
 
+// maxOffline bounds the wait while Xiaomi cannot be reached: once the line is back, the next
+// request should be heard at once.
+const maxOffline = 5 * time.Second
+
+// pollTimeout bounds one read; a record read later than that is hardly worth waiting for.
+const pollTimeout = 6 * time.Second
+
 // maxRefused bounds the wait after Xiaomi refuses reads.
 const maxRefused = 5 * time.Minute
 
 // Run polls until ctx ends.
 func (o *Observer) Run(ctx context.Context) {
-	if n, err := o.st.PruneCommands(ctx, o.now().AddDate(0, 0, -180)); err == nil && n > 0 {
-		o.log.Info("记录　清理过期", "条数", n)
-	}
 	t := time.NewTicker(o.interval)
 	defer t.Stop()
+	var pruned time.Time
 	for {
+		if now := o.now(); now.Sub(pruned) > 24*time.Hour {
+			pruned = now
+			if n, err := o.st.Prune(ctx, now.AddDate(0, 0, -180)); err != nil {
+				o.log.Warn("记录　清理没有完成", "原因", err)
+			} else if n > 0 {
+				o.log.Info("记录　清理过期", "条数", n)
+			}
+		}
 		o.Tick(ctx)
 		select {
 		case <-ctx.Done():
@@ -207,17 +221,22 @@ func (o *Observer) Tick(ctx context.Context) {
 
 func (o *Observer) poll(ctx context.Context, id string, w *watch) {
 	defer o.wg.Done()
+	defer logx.Recover(o.log, "听歌")
+	defer func() { // also after a fault: the speaker must be listened to again
+		o.mu.Lock()
+		w.inflight = false
+		o.mu.Unlock()
+	}()
 	o.mu.Lock()
 	hardware := w.hardware
 	o.mu.Unlock()
 	started := o.now()
-	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	rctx, cancel := context.WithTimeout(ctx, pollTimeout)
 	recs, err := o.src.Conversations(rctx, id, hardware, 5)
 	cancel()
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	w.inflight = false
 	w.status.LastPollAt = started
 	took := o.now().Sub(started).Milliseconds()
 	defer func() {
@@ -236,7 +255,7 @@ func (o *Observer) poll(ctx context.Context, id string, w *watch) {
 		w.failures++
 		backoff := o.interval << min(w.failures, 5)
 		if k := xiaomi.KindOf(err); k == xiaomi.KindNetwork {
-			backoff = min(backoff, time.Minute)
+			backoff = min(backoff, maxOffline)
 		} else if w.failures > 3 { // refused: leave Xiaomi alone for a while
 			backoff = min(o.interval<<min(w.failures, 10), maxRefused)
 		}
@@ -310,6 +329,7 @@ func (o *Observer) handle(ctx context.Context, id string, w *watch, r xiaomi.Rec
 			o.wg.Add(1)
 			go func(hardware, mode string) {
 				defer o.wg.Done()
+				defer logx.Recover(o.log, "点歌")
 				o.onCommand(ctx, c, hardware, mode)
 			}(w.hardware, w.mode)
 		}

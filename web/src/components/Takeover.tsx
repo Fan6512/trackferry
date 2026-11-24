@@ -26,7 +26,7 @@ export function Takeover({ devices }: { devices: Device[] }) {
   const running = runs?.some((r) => r.outcome === 'running') ?? false;
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, running ? 700 : 4000);
+    const t = setInterval(() => { if (!document.hidden) refresh(); }, running ? 700 : 4000);
     return () => clearInterval(t);
   }, [refresh, running]);
 

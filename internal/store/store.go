@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -20,7 +21,8 @@ var migrationFS embed.FS
 
 // Store wraps the database handle.
 type Store struct {
-	db *sql.DB
+	db *sql.DB // writes, and reads within transactions
+	rd *sql.DB // everything else: in WAL mode these never wait for a write
 }
 
 // Open opens (creating if needed) the database at path and applies pending migrations.
@@ -45,11 +47,18 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if s.rd, err = sql.Open("sqlite", dsn+"&_pragma=query_only(ON)"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	s.rd.SetMaxOpenConns(4)
+	s.rd.SetMaxIdleConns(4)
+	s.rd.SetConnMaxIdleTime(0)
 	return s, nil
 }
 
 // Close releases the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { return errors.Join(s.rd.Close(), s.db.Close()) }
 
 // Backup writes a consistent copy of the database to path, which must not exist.
 func (s *Store) Backup(ctx context.Context, path string) error {
@@ -57,10 +66,10 @@ func (s *Store) Backup(ctx context.Context, path string) error {
 	return err
 }
 
-// Ping checks the database answers within ctx.
+// Ping checks the database answers within ctx, writer included.
 func (s *Store) Ping(ctx context.Context) error {
 	var one int
-	return s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+	return errors.Join(s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one), s.rd.QueryRowContext(ctx, "SELECT 1").Scan(&one))
 }
 
 type migration struct {
@@ -146,7 +155,7 @@ func (s *Store) apply(ctx context.Context, m migration) error {
 // SchemaVersion returns the highest applied migration.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	var v sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&v)
+	err := s.rd.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&v)
 	return int(v.Int64), err
 }
 
@@ -176,7 +185,7 @@ func (s *Store) RecordBoot(ctx context.Context, version, commit string, at time.
 // BootCount returns how many starts have been recorded.
 func (s *Store) BootCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM boots").Scan(&n)
+	err := s.rd.QueryRowContext(ctx, "SELECT COUNT(*) FROM boots").Scan(&n)
 	return n, err
 }
 
@@ -184,7 +193,7 @@ func (s *Store) BootCount(ctx context.Context) (int, error) {
 func (s *Store) FirstBoot(ctx context.Context) (Boot, error) {
 	var b Boot
 	var at string
-	err := s.db.QueryRowContext(ctx, "SELECT id, started_at, version, git_commit FROM boots ORDER BY id LIMIT 1").
+	err := s.rd.QueryRowContext(ctx, "SELECT id, started_at, version, git_commit FROM boots ORDER BY id LIMIT 1").
 		Scan(&b.ID, &at, &b.Version, &b.Commit)
 	if err != nil {
 		return Boot{}, err

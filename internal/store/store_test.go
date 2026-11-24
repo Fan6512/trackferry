@@ -187,3 +187,47 @@ func TestTakeoverRunsAndPendingVolume(t *testing.T) {
 		t.Fatal(all)
 	}
 }
+
+func TestReadsDoNotWaitForAWrite(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tx, _ := s.db.BeginTx(ctx, nil)
+	defer tx.Rollback()
+	tx.ExecContext(ctx, "INSERT INTO settings(key, value) VALUES ('a', 'b')")
+	c, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, err := s.Devices(c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.rd.ExecContext(c, "DELETE FROM settings"); err == nil {
+		t.Fatal("the reading side can write")
+	}
+}
+
+func TestPruneKeepsTheFirstStartAndTheNewest(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for range 520 {
+		s.RecordBoot(ctx, "v", "c", time.Now())
+	}
+	for range 60 {
+		s.StartScan(ctx, time.Now())
+	}
+	if n, err := s.Prune(ctx, time.Now()); err != nil || n != 29 {
+		t.Fatal(n, err)
+	}
+	if b, err := s.FirstBoot(ctx); err != nil || b.ID != 1 {
+		t.Fatal(b, err)
+	}
+	if n, _ := s.BootCount(ctx); n != 501 {
+		t.Fatal(n)
+	}
+}

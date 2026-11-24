@@ -32,7 +32,7 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
   const running = lib?.running ?? false;
   useEffect(() => {
     load();
-    const t = setInterval(load, running ? 1200 : 15000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, running ? 1200 : 15000);
     return () => clearInterval(t);
   }, [load, running]);
 

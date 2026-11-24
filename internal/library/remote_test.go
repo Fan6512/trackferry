@@ -74,3 +74,34 @@ func TestRemoteReplacesFiles(t *testing.T) {
 		t.Errorf("after unlinking: %v %d", err, l.Size())
 	}
 }
+
+func TestUnchangedSyncWritesNothingAndCutShortSyncHeals(t *testing.T) {
+	ctx := context.Background()
+	l, _ := newLib(t, nil)
+	f := &fakeRemote{linked: true}
+	for i := range 450 {
+		f.songs = append(f.songs, song(i, fmt.Sprint("歌", i), "甲", "/vol1/1000/音乐/x.flac"))
+	}
+	f.total = 450
+	l.Remote = f
+	if err := l.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	idx := l.idx
+	if err := l.Scan(ctx); err != nil || l.idx != idx {
+		t.Fatalf("index rebuilt for nothing: %v", err)
+	}
+	// Two new songs are written, then the sync breaks off; they are gone the next time.
+	f.songs = append([]feiniu.Song{song(700, "新", "乙", "/vol1/1000/音乐/x.flac"), song(701, "新二", "乙", "/vol1/1000/音乐/x.flac")}, f.songs...)
+	f.total = 500
+	if err := l.Scan(ctx); err == nil {
+		t.Fatal("short read accepted")
+	}
+	f.songs, f.total = f.songs[2:], 450
+	if err := l.Scan(ctx); err != nil || l.Size() != 450 {
+		t.Fatal(err, l.Size())
+	}
+	if n := l.Status().Last.Removed; n != 2 {
+		t.Fatalf("removed %d", n)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -262,7 +263,7 @@ func (s *Service) Find(ctx context.Context, readings []Reading, request string) 
 			sctx, done := context.WithTimeout(ctx, searchTimeout)
 			defer done()
 			s.sem <- struct{}{}
-			cands, err := e.src.Search(sctx, query)
+			cands, err := s.search(sctx, e.src, query)
 			<-s.sem
 			if ctx.Err() == nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				s.record(e, time.Since(start), err)
@@ -471,8 +472,27 @@ func (s *Service) resolve(ctx context.Context, e *entry, hs []hit) (*Found, stri
 	return nil, state, detail
 }
 
+// search and address ask a source. What it answers is not ours to trust: a fault while
+// reading it is that source's error.
+func (s *Service) search(ctx context.Context, src Source, q string) (c []Candidate, err error) {
+	defer s.fault(&err)
+	return src.Search(ctx, q)
+}
+
+func (s *Service) address(ctx context.Context, src Source, c Candidate) (u string, err error) {
+	defer s.fault(&err)
+	return src.Resolve(ctx, c)
+}
+
+func (s *Service) fault(err *error) {
+	if p := recover(); p != nil {
+		s.log.Error("在线　程序出错", "原因", fmt.Sprint(p), "位置", string(debug.Stack()))
+		*err = errors.New("返回的内容读不懂")
+	}
+}
+
 func (s *Service) resolveOne(ctx context.Context, src Source, c Candidate) (Stream, error) {
-	u, err := src.Resolve(ctx, c)
+	u, err := s.address(ctx, src, c)
 	if err != nil {
 		return Stream{}, err
 	}

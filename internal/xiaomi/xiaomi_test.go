@@ -320,6 +320,15 @@ func TestSyncReportsRelinkWhenPassTokenRevoked(t *testing.T) {
 	if !m.Status().RelinkRequired {
 		t.Fatal("status should ask for a new scan")
 	}
+
+	// It works after all: no scan needed.
+	f.passValid.Store(true)
+	m.syncMu.Lock()
+	m.triedErr = nil
+	m.syncMu.Unlock()
+	if info := m.Sync(context.Background()); info.Outcome != SyncOK || m.Status().RelinkRequired {
+		t.Fatalf("sync = %+v, relink %v", info, m.Status().RelinkRequired)
+	}
 }
 
 func TestEmptyAccountIsReportedAsEmpty(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"trackferry/internal/live"
+	"trackferry/internal/logx"
 	"trackferry/internal/store"
 	"trackferry/internal/xiaomi"
 )
@@ -125,6 +126,7 @@ type device struct {
 	run    sync.Mutex // one run at a time per speaker
 	cancel context.CancelFunc
 	gen    int
+	hold   int // runs and answers that own the speaker's volume right now
 	// released is closed when the user spoke a command that Xiao AI keeps: the guard must
 	// stop fighting whatever she plays next.
 	released chan struct{}
@@ -133,7 +135,7 @@ type device struct {
 
 // New returns an Engine.
 func New(sp Speaker, st *store.Store, log *slog.Logger, timing Timing) *Engine {
-	return &Engine{sp: sp, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}}
+	return &Engine{sp: prompt{sp}, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}}
 }
 
 // Start begins a takeover in the background, cancelling any run in progress on the same
@@ -155,6 +157,7 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	d.gen++
+	d.hold++ // a newer run owns the volume from here on, though the older one is still leaving
 	gen := d.gen
 	d.cancel = cancel
 	released := make(chan struct{})
@@ -168,12 +171,21 @@ func (e *Engine) Start(ctx context.Context, req Request) (store.TakeoverRun, err
 		defer cancel()
 		d.run.Lock()
 		defer d.run.Unlock()
-		e.execute(runCtx, req, &own, released, heard)
-		e.mu.Lock()
-		if d.gen == gen {
-			d.cancel = nil
-		}
-		e.mu.Unlock()
+		letGo := e.letGo(d)
+		defer func() {
+			letGo()
+			e.mu.Lock()
+			if d.gen == gen {
+				d.cancel, d.released, d.heard = nil, nil, nil
+			}
+			e.mu.Unlock()
+		}()
+		defer logx.Recover(e.log, "接管")
+		e.execute(runCtx, req, &own, released, heard, func() bool {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return d.gen != gen
+		}, letGo)
 	}()
 	return run, nil
 }
@@ -227,10 +239,13 @@ func (e *Engine) Run(ctx context.Context, req Request) (store.TakeoverRun, error
 		d = &device{}
 		e.devs[req.DeviceID] = d
 	}
+	d.hold++
 	e.mu.Unlock()
+	letGo := e.letGo(d)
+	defer letGo()
 	d.run.Lock()
 	defer d.run.Unlock()
-	e.execute(ctx, req, &run, nil, nil)
+	e.execute(ctx, req, &run, nil, nil, func() bool { return false }, letGo)
 	return run, nil
 }
 
@@ -243,15 +258,60 @@ type runner struct {
 	mu      sync.Mutex
 	elapsed time.Duration
 	phase   string
+
+	saving bool // a write of the progress is on its way
+	dirty  bool // and there is more to write
+	closed bool // the final write has been made
 }
 
 func (r *runner) step(name string, ok bool, detail string) {
 	r.mu.Lock()
 	r.run.Steps = append(r.run.Steps, store.Step{Step: name, AtMS: r.e.now().Sub(r.start).Milliseconds(), OK: ok, Detail: detail})
 	r.tell()
+	// Progress is visible while the run is going. Writing it must not hold up the speaker.
+	r.dirty = true
+	if !r.saving && !r.closed {
+		r.saving = true
+		go r.save()
+	}
 	r.mu.Unlock()
-	// Progress is visible while the run is going.
-	r.e.st.SaveRun(context.WithoutCancel(r.ctx), r.run)
+}
+
+// save writes the progress until there is nothing new.
+func (r *runner) save() {
+	for {
+		r.mu.Lock()
+		if !r.dirty || r.closed {
+			r.saving = false
+			r.mu.Unlock()
+			return
+		}
+		r.dirty = false
+		c := *r.run
+		c.Steps = slices.Clone(c.Steps)
+		r.mu.Unlock()
+		r.e.st.SaveRun(context.WithoutCancel(r.ctx), &c)
+	}
+}
+
+// settle waits for writes under way and makes the last one. Steps after it start over.
+func (r *runner) settle() {
+	for {
+		r.mu.Lock()
+		if !r.saving {
+			r.closed = true
+			c := *r.run
+			c.Steps = slices.Clone(c.Steps)
+			r.mu.Unlock()
+			r.e.st.SaveRun(context.WithoutCancel(r.ctx), &c)
+			r.mu.Lock()
+			r.closed, r.dirty = false, false
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // tell hands the web UI a copy of the run. Call with r.mu held or before steps are shared.
@@ -315,12 +375,15 @@ func (e *Engine) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRun, released <-chan struct{}, heard <-chan Heard) {
+func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRun, released <-chan struct{}, heard <-chan Heard, superseded func() bool, letGo func()) {
 	r := &runner{e: e, ctx: ctx, req: req, run: run, start: time.UnixMilli(run.StartedMS)}
+	defer r.settle()
 	finish := func(outcome, detail string) {
+		r.mu.Lock()
 		run.Outcome, run.Detail, run.FinishedMS = outcome, detail, e.now().UnixMilli()
-		e.st.SaveRun(context.WithoutCancel(ctx), run)
 		r.tell()
+		r.mu.Unlock()
+		r.settle()
 		if outcome != store.OutcomeConfirmed && outcome != store.OutcomeFetched {
 			req.Trace.Done("")
 		}
@@ -332,9 +395,9 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 
 	// 1. Volume to come back to. A pending entry means an earlier run muted the speaker
 	// and has not restored it yet: its value is the user's real volume.
-	volume := -1
+	volume, inherited := -1, false
 	if v, ok, err := e.st.PendingVolume(bg, dev); err == nil && ok {
-		volume = v
+		volume, inherited = v, true
 		r.step(StepStatus, true, fmt.Sprintf("沿用待恢复音量 %d", v))
 	} else if p, err := r.status(); err == nil {
 		volume = p.Volume
@@ -351,6 +414,10 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 			return
 		}
 		restored = true
+		defer letGo()
+		if superseded() {
+			return // the newer run keeps the mute and finds the volume to come back to
+		}
 		var err error
 		for i := 0; i < 3; i++ {
 			c, cancel := context.WithTimeout(bg, 6*time.Second)
@@ -370,13 +437,17 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	if volume > 0 {
 		if err := e.st.SetPendingVolume(bg, dev, volume, e.now()); err != nil {
 			r.step(StepMute, false, "记不下原音量，不静音")
-		} else if err := e.sp.SetVolume(ctx, dev, 0); err != nil {
-			e.st.ClearPendingVolume(bg, dev)
-			r.step(StepMute, false, describe(err))
 		} else {
-			muted = true
-			r.step(StepMute, true, "")
+			err := e.sp.SetVolume(ctx, dev, 0)
+			// Only a plain refusal means nothing changed. A call that got lost may have arrived.
+			if muted = inherited || err == nil || !refused(err); !muted {
+				e.st.ClearPendingVolume(bg, dev)
+			}
+			r.step(StepMute, err == nil, describe(err))
 		}
+	}
+	if !muted {
+		letGo()
 	}
 
 	cancelled := func() bool {
@@ -401,6 +472,13 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	// 4. Push our stream.
 	push := func(name string) error {
 		err := e.sp.PlayURL(ctx, dev, req.Hardware, req.Track.URL)
+		for i := 0; err != nil && ctx.Err() == nil && i < 2; i++ {
+			r.step(name, false, describe(err)+"，再试")
+			if e.sleep(ctx, 300*time.Millisecond) != nil {
+				break
+			}
+			err = e.sp.PlayURL(ctx, dev, req.Hardware, req.Track.URL)
+		}
 		r.step(name, err == nil, describe(err))
 		return err
 	}
@@ -418,7 +496,9 @@ func (e *Engine) execute(ctx context.Context, req Request, run *store.TakeoverRu
 	var fetchedAt time.Time
 	confirmed := false
 	replays := 0
-	tick := time.NewTicker(e.timing.Poll)
+	pushed := e.now()
+	fast := e.timing.Poll / 2 // until it sounds: the mute lifts that much sooner
+	tick := time.NewTimer(fast)
 	defer tick.Stop()
 	fetched := req.Track.Fetched
 guard:
@@ -431,11 +511,17 @@ guard:
 			fetched = nil
 			fetchedAt = e.now()
 			r.step(StepFetched, true, "")
+			tick.Reset(fast / 2)
 			continue
 		case <-released:
 			r.step(StepReleased, true, "有新的口令交给小爱，不再守护")
 			break guard
 		case <-tick.C:
+		}
+		if confirmed {
+			tick.Reset(e.timing.Poll)
+		} else {
+			tick.Reset(fast)
 		}
 		if !fetchedAt.IsZero() && !confirmed && e.now().Sub(fetchedAt) >= e.timing.UnmuteAfter {
 			restore() // the stream is being pulled; do not keep the user waiting on a lagging status
@@ -459,7 +545,15 @@ guard:
 			if err := push(StepReplay); err != nil {
 				continue
 			}
+			pushed = e.now()
 			confirmed = false
+			continue
+		}
+		// Accepted, but the speaker neither came for it nor plays anything: it got lost.
+		if fetched != nil && !p.Playing() && replays < e.timing.MaxReplays && e.now().Sub(pushed) >= e.timing.Guard*3/8 {
+			replays++
+			push(StepReplay)
+			pushed = e.now()
 			continue
 		}
 		if !confirmed && !fetchedAt.IsZero() && p.Playing() {
@@ -482,39 +576,84 @@ guard:
 	req.Trace.Done("")
 }
 
-// RecoverVolumes restores volumes left muted by a previous process. Call it at start,
-// before any takeover runs; it retries until those speakers are restored or ctx ends.
-func (e *Engine) RecoverVolumes(ctx context.Context) {
-	pending, err := e.st.PendingVolumes(ctx)
-	if err != nil {
-		e.log.Warn("接管　读不到待恢复的音量", "原因", err)
-		return
+// refused reports that a speaker or Xiaomi certainly did not do what it was asked.
+func refused(err error) bool {
+	var de *xiaomi.DeviceError
+	return errors.As(err, &de) || errors.Is(err, xiaomi.ErrNotLinked) || errors.Is(err, xiaomi.ErrUnauthorized)
+}
+
+// hold marks a speaker's volume as being looked after and returns what ends that.
+func (e *Engine) hold(dev string) func() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	d := e.devs[dev]
+	if d == nil {
+		d = &device{}
+		e.devs[dev] = d
 	}
-	for len(pending) > 0 {
-		for dev, v := range pending {
-			if e.busy(dev) {
-				delete(pending, dev) // a new run owns this speaker's volume now
-				continue
-			}
-			c, cancel := context.WithTimeout(ctx, 6*time.Second)
-			err := e.sp.SetVolume(c, dev, v)
-			cancel()
-			if err == nil {
-				e.st.ClearPendingVolume(ctx, dev)
-				delete(pending, dev)
-				e.log.Warn("接管　已恢复上次留下的静音", "音量", v)
-			}
-		}
-		if len(pending) == 0 || e.sleep(ctx, 30*time.Second) != nil {
+	d.hold++
+	return e.letGo(d)
+}
+
+// letGo returns what ends one hold, however often it is called.
+func (e *Engine) letGo(d *device) func() {
+	return sync.OnceFunc(func() {
+		e.mu.Lock()
+		d.hold--
+		e.mu.Unlock()
+	})
+}
+
+func (e *Engine) held(dev string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	d := e.devs[dev]
+	return d != nil && d.hold > 0
+}
+
+// recoverEvery is between looks for speakers left muted.
+const recoverEvery = 20 * time.Second
+
+// RecoverVolumes puts back volumes that a previous process, or a run that could not reach
+// the speaker, left muted. It runs until ctx ends.
+func (e *Engine) RecoverVolumes(ctx context.Context) {
+	for {
+		e.recoverOnce(ctx)
+		if e.sleep(ctx, recoverEvery) != nil {
 			return
 		}
 	}
 }
 
-// busy reports whether a run has touched the speaker in this process. Such a run takes
-// over the pending volume (it restores the value it found pending), so recovery leaves it.
-func (e *Engine) busy(dev string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.devs[dev] != nil
+func (e *Engine) recoverOnce(ctx context.Context) {
+	defer logx.Recover(e.log, "接管")
+	pending, err := e.st.PendingVolumes(ctx)
+	if err != nil {
+		e.log.Warn("接管　读不到待恢复的音量", "原因", err)
+		return
+	}
+	for dev, v := range pending {
+		e.recoverVolume(ctx, dev, v)
+	}
+}
+
+func (e *Engine) recoverVolume(ctx context.Context, dev string, v int) {
+	if e.held(dev) {
+		return
+	}
+	c, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	p, err := e.sp.PlayStatus(c, dev)
+	if err != nil || e.held(dev) {
+		return
+	}
+	if p.Volume > 0 { // somebody turned it up already, or the mute never arrived
+		e.st.ClearPendingVolume(ctx, dev)
+		return
+	}
+	if err := e.sp.SetVolume(c, dev, v); err != nil || e.held(dev) {
+		return // a run that began meanwhile found the pending volume and restores it
+	}
+	e.st.ClearPendingVolume(ctx, dev)
+	e.log.Info("接管　已恢复留下的静音", "音量", v)
 }
