@@ -1,0 +1,55 @@
+# TrackFerry 部署文件。改好标着【改】的地方，然后依次执行：
+#
+#   mkdir -p data && sudo chown -R 10001:10001 data   # 只在第一次做，把 data 交给容器的身份
+#   docker compose up -d
+#   docker compose logs trackferry                    # 最后一段是首次登录用的初始化码
+#
+# 逐步说明和常见问题：docs/deployment.md　全部配置项：docs/configuration.md
+name: trackferry
+
+services:
+  trackferry:
+    image: madrays/trackferry:1.0.0
+    container_name: trackferry
+    restart: unless-stopped
+
+    # 直接使用 NAS 的网络：连本机的飞牛音乐最省事，也不用映射端口。
+    # NAS 开着防火墙时，要放行下面这个端口给局域网，音箱才取得到歌。
+    network_mode: host
+
+    environment:
+      TZ: Asia/Shanghai
+      # 【改】这台 NAS 的局域网地址。音箱从这里取歌，不能写 127.0.0.1 或 localhost
+      TRACKFERRY_URL: "http://192.168.1.10:18561"
+      # 监听端口。被占用时换一个，上面地址里的端口要一起改
+      TRACKFERRY_LISTEN: ":18561"
+      # 允许设为“接管”的音箱：* 是全部；也可以写名字的一部分，逗号分隔，如 "书房,客厅"
+      # 这里只是放行，要不要接管在管理页里逐台选
+      TRACKFERRY_TAKEOVER: "*"
+      # 每天去 GitHub 看有没有新版本，只查看不安装。不需要就改成 "off"
+      TRACKFERRY_UPDATE_CHECK: "on"
+
+    volumes:
+      # 数据库、登录凭据和设置都在这里。升级、重建容器都不会丢，备份也只需要备份它
+      - ./data:/data
+      # 可选：不用飞牛音乐时，只读挂载一个音乐文件夹当曲库
+      # - /vol1/1000/Music:/music:ro
+
+    # 容器里的程序用哪个身份运行，格式是“用户号:组号”。
+    # 10001 是专门给 TrackFerry 留的普通身份：不是 root，也不对应 NAS 上任何真实用户，
+    # 万一程序出问题，也动不了 NAS 上别人的文件。它不需要在 NAS 上创建。
+    # 所以要先执行开头那条 chown，让它能写入 ./data。
+    # 想换成自己的身份：把这里改成 id -u 和 id -g 的结果，并对 data 执行同样数字的 chown。
+    user: "10001:10001"
+
+    # 安全限制，保持不动：容器内文件只读、去掉所有系统特权、不允许再提升权限
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+    # 停止时留出时间，把音箱音量恢复好
+    stop_grace_period: 20s
+    # 日志最多占 30 MB
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
