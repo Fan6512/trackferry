@@ -9,7 +9,7 @@ name: trackferry
 
 services:
   trackferry:
-    image: madrays/trackferry:1.0.0
+    image: madrays/trackferry:1.1.0
     container_name: trackferry
     restart: unless-stopped
 
@@ -26,7 +26,7 @@ services:
       # 允许设为“接管”的音箱：* 是全部；也可以写名字的一部分，逗号分隔，如 "书房,客厅"
       # 这里只是放行，要不要接管在管理页里逐台选
       TRACKFERRY_TAKEOVER: "*"
-      # 每天去 GitHub 看有没有新版本，只查看不安装。不需要就改成 "off"
+      # 每天去 GitHub 看有没有新版本，不会自己安装。不需要就改成 "off"
       TRACKFERRY_UPDATE_CHECK: "on"
 
     volumes:

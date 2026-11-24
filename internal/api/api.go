@@ -107,6 +107,29 @@ func (s *Server) Handler() http.Handler {
 	if s.Update != nil {
 		authed("GET /api/update", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Update.Status()) })
 		authed("POST /api/update", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, s.Update.Check(r.Context())) })
+		authed("PUT /api/update/proxy", func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Proxy string `json:"proxy"`
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+				writeError(w, http.StatusBadRequest, "bad_request", "请求格式不对")
+				return
+			}
+			if err := s.Update.SetProxy(in.Proxy); err != nil {
+				writeError(w, http.StatusBadRequest, "bad_proxy", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, s.Update.Check(r.Context()))
+		})
+		authed("POST /api/update/install", func(w http.ResponseWriter, r *http.Request) {
+			// Outlives this request.
+			if err := s.Update.Install(context.WithoutCancel(r.Context())); err != nil {
+				writeError(w, http.StatusConflict, "no_update", err.Error())
+				return
+			}
+			s.Log.Info("更新　开始安装")
+			writeJSON(w, http.StatusAccepted, s.Update.Status())
+		})
 	}
 	authed("GET /api/xiaomi", s.xiaomiStatus)
 	authed("DELETE /api/xiaomi", s.xiaomiUnlink)

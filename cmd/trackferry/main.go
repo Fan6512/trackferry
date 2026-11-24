@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"syscall"
 	"time"
@@ -52,6 +53,10 @@ func main() {
 	}
 	var err error
 	switch cmd {
+	case "serve", "setup-code", "reset-admin":
+		launch(cmd == "serve")
+	}
+	switch cmd {
 	case "serve":
 		err = serve()
 	case "relay":
@@ -67,9 +72,32 @@ func main() {
 	default:
 		err = fmt.Errorf("unknown command %q (want serve, relay, healthcheck, setup-code, reset-admin or version)", cmd)
 	}
+	if errors.Is(err, errRestart) {
+		err = update.Relaunch(handOver)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "trackferry:", err)
 		os.Exit(1)
+	}
+}
+
+// errRestart asks main to start again, into an update.
+var errRestart = errors.New("restart")
+
+// handOver replaces this process, keeping its process ID and arguments.
+func handOver(path string, env []string) error {
+	args := append([]string{path}, os.Args[1:]...)
+	return syscall.Exec(path, args, env)
+}
+
+// launch runs the version installed from the settings page, if there is one.
+func launch(serving bool) {
+	cfg, err := config.Load(configPath())
+	if err != nil {
+		return // the command reports it
+	}
+	if note := update.Launch(cfg.DataDir, version, serving, handOver); note != "" {
+		newLog().Warn("更新　" + note)
 	}
 }
 
@@ -221,6 +249,13 @@ func serve() error {
 	go obs.Run(ctx)
 
 	checker := update.New(repo, version, cfg.UpdateCheck, log)
+	if err := checker.LoadProxy(filepath.Join(private, "update_proxy")); err != nil {
+		log.Warn("更新　保存的代理地址不能用", "原因", "格式不对或读不出来")
+	}
+	restart := make(chan struct{})
+	if runtime.GOOS == "linux" {
+		checker.Installer = &update.Installer{Data: cfg.DataDir, Backup: st.Backup, Restart: func() { close(restart) }}
+	}
 	go checker.Run(ctx)
 	srv := api.New(api.Options{
 		Config: cfg, Store: st, Token: token, SetupCodePath: setupCodePath,
@@ -265,7 +300,13 @@ func serve() error {
 		showCode(firstCode)
 	}
 	srv.MarkReady()
+	time.AfterFunc(update.Settle, func() {
+		if err := update.Confirm(cfg.DataDir, version); err != nil {
+			log.Warn("更新　没能记下这一版运行正常", "原因", err)
+		}
+	})
 
+	var again error
 	errc := make(chan error, 1)
 	go func() { errc <- httpSrv.Serve(ln) }()
 	select {
@@ -274,6 +315,9 @@ func serve() error {
 			return err
 		}
 	case <-ctx.Done():
+	case <-restart:
+		again = errRestart
+		stop() // everything else ends too
 	}
 	log.Info("停止　正在收尾")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -282,7 +326,7 @@ func serve() error {
 		log.Warn("停止　有连接没有收尾", "原因", err)
 	}
 	log.Info("停止　完成")
-	return nil
+	return again
 }
 
 // runRelay is the whole of the relay container (compose.yaml).
@@ -356,12 +400,12 @@ func healthcheck() error {
 	if err != nil {
 		return err
 	}
-	port, err := config.ListenPort(cfg.Listen)
+	local, err := cfg.LocalURL()
 	if err != nil {
 		return err
 	}
 	client := http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz/live", port))
+	resp, err := client.Get(local + "/healthz/live")
 	if err != nil {
 		return err
 	}

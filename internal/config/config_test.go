@@ -73,3 +73,17 @@ func TestEnvironmentWins(t *testing.T) {
 		t.Fatal("an address without http:// was accepted")
 	}
 }
+
+func TestLocalURL(t *testing.T) {
+	for listen, want := range map[string]string{
+		":18561":             "http://127.0.0.1:18561",
+		"0.0.0.0:18561":      "http://127.0.0.1:18561",
+		"[::]:18561":         "http://127.0.0.1:18561",
+		"192.168.1.10:18561": "http://192.168.1.10:18561",
+		"[fd00::1]:18561":    "http://[fd00::1]:18561",
+	} {
+		if got, err := (Config{Listen: listen}).LocalURL(); err != nil || got != want {
+			t.Errorf("%s: %s %v", listen, got, err)
+		}
+	}
+}

@@ -32,3 +32,6 @@
 .st-update { gap: 16px; padding-left: 28px; } .st-update h3 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; font-weight: 420; font-size: 22px; } .st-update small { color: var(--ink3); } .st-update a { font-size: 14px; color: var(--stone); text-underline-offset: 4px; }
 .st-update pre { margin: 8px 0 0; padding: 14px 16px; border-radius: 4px; background: var(--well); font: 400 13px/1.7 ui-monospace, 'SF Mono', Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; } .st-update .st-notes { margin: 0; max-height: 280px; overflow: auto; font-family: var(--sans); }
 @media (max-width: 860px) { .st-about { flex-wrap: wrap; gap: 18px; } .st-about > .btn { margin-left: 0; min-height: 44px; } .st-update { padding-left: 20px; } }
+.st-progress { display: flex; align-items: center; gap: 10px; }
+.st-proxy { padding-left: 28px; } .st-proxy .link { margin-left: 10px; }
+@media (max-width: 860px) { .st-proxy { padding-left: 20px; } }

@@ -1,7 +1,8 @@
 // Thin client for the TrackFerry management API. Every mutating request carries the
 // CSRF header the server requires for cookie sessions.
 
-export interface UpdateStatus { enabled: boolean; current: string; latest?: string; newer: boolean; url?: string; notes?: string; published?: string; checked_ms?: number; error?: string }
+export interface UpdateStatus { enabled: boolean; current: string; latest?: string; newer: boolean; url?: string; notes?: string; published?: string; checked_ms?: number; error?: string;
+  proxy?: string; installable?: boolean; failed?: string; install?: { phase: 'download' | 'check' | 'restart'; done?: number; total?: number; error?: string } }
 
 export type Mode = 'off' | 'observe' | 'takeover';
 
@@ -325,6 +326,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   update: () => request<UpdateStatus>('GET', '/api/update'),
   checkUpdate: () => request<UpdateStatus>('POST', '/api/update'),
+  updateProxy: (proxy: string) => request<UpdateStatus>('PUT', '/api/update/proxy', { proxy }),
+  installUpdate: () => request<UpdateStatus>('POST', '/api/update/install'),
   session: () => request<Session>('GET', '/api/session'),
   setup: (setup_code: string, password: string) => request('POST', '/api/setup', { setup_code, password }),
   login: (password: string) => request('POST', '/api/login', { password }),

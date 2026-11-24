@@ -107,6 +107,19 @@ func (c Config) Validate() error {
 	return errors.Join(errs...)
 }
 
+// LocalURL is where the server is reached from inside its own container.
+func (c Config) LocalURL() (string, error) {
+	port, err := ListenPort(c.Listen)
+	if err != nil {
+		return "", err
+	}
+	host, _, _ := net.SplitHostPort(c.Listen)
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)), nil
+}
+
 // ListenPort extracts the TCP port from a listen address such as ":18561".
 func ListenPort(listen string) (int, error) {
 	_, portStr, err := net.SplitHostPort(listen)

@@ -54,4 +54,6 @@
 | `/api/xiaomi/password`、`/captcha`、`/verify` | 密码登录 |
 | `POST /api/password` | 改管理密码 |
 | `GET /api/status` | 运行状态 |
-| `GET /api/update` · `POST /api/update` | 上次检查结果；立即检查 |
+| `GET /api/update` · `POST /api/update` | 上次检查结果与安装进度；立即检查 |
+| `POST /api/update/install` | 安装最新版本并重启 |
+| `PUT /api/update/proxy` | 设置更新用的代理 `{"proxy": "http://192.168.1.2:7890"}`，空字符串为直接连接 |

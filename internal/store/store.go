@@ -51,6 +51,12 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Close releases the database.
 func (s *Store) Close() error { return s.db.Close() }
 
+// Backup writes a consistent copy of the database to path, which must not exist.
+func (s *Store) Backup(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, "VACUUM INTO ?", path)
+	return err
+}
+
 // Ping checks the database answers within ctx.
 func (s *Store) Ping(ctx context.Context) error {
 	var one int

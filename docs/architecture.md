@@ -33,7 +33,7 @@ Go 单进程：对话轮询、路由、音频服务和管理接口都在一个�
 | `internal/live` | 把正在发生的事实时告诉管理页，只报告不决定 |
 | `internal/observe` | 按音箱轮询对话、水位与去重 |
 | `internal/relay` | 备选的本机通道 |
-| `internal/update` | 去 GitHub 看有没有新版本 |
+| `internal/update` | 去 GitHub 看有没有新版本，下载、核对签名并切换；启动时决定用镜像里的还是已安装的程序 |
 | `internal/logx` | 中文日志与醒目的提示框 |
 | `internal/config`、`internal/fscheck` | 配置与目录检查 |
 | `internal/webui` | 嵌入的管理页静态资产，客户端路由回退到 index.html |

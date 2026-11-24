@@ -177,17 +177,111 @@ function About({ build, onLight }: { build: { version: string; commit: string };
           <img src={word} alt="TrackFerry" width={150} />
           <p>小爱点歌，飞牛曲库优先</p>
           <small className="num">版本 {build.version}{build.commit && build.commit !== 'unknown' && `（${build.commit}）`}{up && !up.newer && up.checked_ms ? up.error ? `，${up.error}` : '，已是最新' : ''}</small>
+          {up?.failed && !up.newer && <small className="field-error">{up.failed} 没能启动，已退回</small>}
         </div>
         <button className="btn" onClick={check} disabled={busy}>{busy ? <><span className="spinner spinner-tiny" />正在检查</> : '检查更新'}</button>
       </div>
       {error && <p className="field-error st-body">{error}</p>}
+      {up && <UpdateProxy saved={up.proxy ?? ''} onStatus={setUp} />}
       {up?.newer && (
         <div className="st-body st-update">
           <h3><b className="num">{up.latest}</b>{up.published && <small>{new Date(up.published).toLocaleDateString('zh-CN')}发布</small>}{up.url && <a href={up.url} target="_blank" rel="noreferrer">更新说明</a>}</h3>
           {up.notes && <pre className="st-notes">{up.notes.replace(/^#+ +/gm, '').replace(/^[-*] +/gm, '· ')}</pre>}
-          <div><p>把 compose.yaml 里的镜像标签改成 <span className="num">{up.latest}</span>，再执行下面的命令，数据不受影响：</p><pre>docker compose pull &amp;&amp; docker compose up -d</pre></div>
+          <Install up={up} running={build.version} onStatus={setUp} />
+          <div><p>{up.installable && '也可以用命令更新：'}把 compose.yaml 里的镜像标签改成 <span className="num">{up.latest}</span>，再执行下面的命令，数据不受影响：</p><pre>docker compose pull &amp;&amp; docker compose up -d</pre></div>
         </div>
       )}
     </section>
+  );
+}
+
+/** Installs the new version and waits until it answers. */
+function Install({ up, running, onStatus }: { up: UpdateStatus; running: string; onStatus: (u: UpdateStatus) => void }) {
+  const [asking, setAsking] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const on = up.install && !up.install.error ? up.install : null;
+  const active = waiting || !!on;
+  useEffect(() => {
+    if (!active) return;
+    let gone = false, down = false;
+    const began = Date.now();
+    const tick = async () => {
+      try {
+        const s = await api.session();
+        if (gone) return;
+        if (s.build.version !== running) return location.reload();
+        const u = await api.update();
+        if (gone) return;
+        if (u.install?.error) { setWaiting(false); onStatus(u); return; }
+        if (!u.install) { // it restarted, and this is still the old version
+          if (u.failed) { setWaiting(false); setError(`${u.failed} 启动不了，已退回 ${running}，数据也已还原`); onStatus({ ...up, install: undefined, failed: u.failed }); return; }
+        } else if (!down) onStatus(u);
+      } catch { down = true; }
+      if (gone) return;
+      if (Date.now() - began > 35 * 60e3) { setWaiting(false); setError('等了很久没有结果，请看容器日志'); return; }
+      timer = setTimeout(tick, 1000);
+    };
+    let timer = setTimeout(tick, 600);
+    return () => { gone = true; clearTimeout(timer); };
+  }, [active]);
+
+  if (!up.installable) return null;
+  const start = async () => {
+    setAsking(false);
+    setError(null);
+    try { onStatus(await api.installUpdate()); setWaiting(true); } catch (e) { setError((e as ApiError).message); }
+  };
+  const percent = on?.total && on.total > 0 && on.done ? Math.min(99, Math.round(on.done / on.total * 100)) : 0;
+  const says = !on || on.phase === 'restart' ? '正在重启' : on.phase === 'check' ? '正在校验' : `正在下载${percent ? ` ${percent}%` : ''}`;
+  const problem = error ?? up.install?.error ?? (up.failed === up.latest ? `${up.failed} 上次没能启动，已退回 ${running}` : null);
+  return (
+    <div>
+      {active ? <p className="st-progress" role="status"><span className="spinner spinner-tiny" /><span className="num">{says}</span></p>
+        : asking ? <div className="confirm">
+          <p>会先备份数据库，再换上 {up.latest} 并重启，正在放的歌会停。新版本起不来时自动退回。</p>
+          <div className="card-actions"><button className="btn btn-primary" onClick={start}>确认更新</button><button className="btn btn-quiet" onClick={() => setAsking(false)}>取消</button></div>
+        </div>
+        : <button className="btn btn-primary" onClick={() => setAsking(true)}>更新到 <span className="num">{up.latest}</span></button>}
+      {problem && !active && <p className="field-error" role="alert">{problem}</p>}
+    </div>
+  );
+}
+
+/** Where update checks and downloads go through; nothing else uses it. */
+function UpdateProxy({ saved, onStatus }: { saved: string; onStatus: (u: UpdateStatus) => void }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = async (next: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const u = await api.updateProxy(next.trim());
+      onStatus(u);
+      setOpen(false);
+      setMsg(u.error ? { ok: false, text: `已保存，但${u.error}` } : { ok: true, text: next.trim() ? '已保存，经代理连得上 GitHub' : '已改为直接连接' });
+    } catch (e) {
+      setMsg({ ok: false, text: (e as ApiError).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="st-body st-proxy">
+      {!open && <p className="hint">{saved ? <>更新代理 <span className="num">{saved}</span></> : '连不上 GitHub 时可以设置代理，只用于检查和下载更新'}<button className="link" onClick={() => { setValue(saved); setMsg(null); setOpen(true); }}>{saved ? '修改' : '设置代理'}</button></p>}
+      {open && (
+        <form className="form form-inline" onSubmit={(e) => { e.preventDefault(); void save(value); }}>
+          <label className="field"><span>更新代理（http、https 或 socks5）</span><input type="text" value={value} onChange={(e) => setValue(e.target.value)} placeholder="http://192.168.1.2:7890" autoComplete="off" spellCheck={false} autoCapitalize="none" /></label>
+          <div className="card-actions">
+            <button className="btn btn-primary" disabled={busy}>{busy ? '正在测试…' : '保存并测试'}</button>
+            {saved && <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void save('')}>不用代理</button>}
+            <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => setOpen(false)}>取消</button>
+          </div>
+        </form>
+      )}
+      {msg && <p className={msg.ok ? 'ok-text' : 'field-error'} role="status">{msg.text}</p>}
+    </div>
   );
 }

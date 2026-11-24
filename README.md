@@ -122,7 +122,9 @@ docker exec trackferry /trackferry setup-code
 <details>
 <summary><b>更新</b></summary>
 
-“设置 → 关于”会提示新版本。先备份 `data`，再把 `compose.yaml` 中的镜像标签改成新版本号，执行：
+“设置 → 关于”会提示新版本，点“更新”即可，起不来会自动退回。
+
+也可以用命令：先备份 `data`，再把 `compose.yaml` 中的镜像标签改成新版本号，执行：
 
 ```sh
 docker compose pull && docker compose up -d

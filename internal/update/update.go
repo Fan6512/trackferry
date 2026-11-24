@@ -1,5 +1,5 @@
-// Package update asks GitHub whether a newer TrackFerry has been released. It sends nothing
-// about this installation and never installs anything.
+// Package update asks GitHub whether a newer TrackFerry has been released and installs it when
+// the owner says so. It sends nothing about this installation.
 package update
 
 import (
@@ -10,9 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +29,12 @@ type Status struct {
 	Published string `json:"published,omitempty"`
 	CheckedMS int64  `json:"checked_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
+
+	Proxy string `json:"proxy,omitempty"` // password hidden
+
+	Installable bool      `json:"installable"`       // the page may offer to install it
+	Install     *Progress `json:"install,omitempty"` // the installation going on
+	FailedLast  string    `json:"failed,omitempty"`  // a version that was installed but did not run
 }
 
 // Checker remembers the last answer.
@@ -36,25 +44,40 @@ type Checker struct {
 	Enabled bool
 	Client  *http.Client
 	Log     *slog.Logger
+	// Installer is nil where updates cannot be installed.
+	Installer *Installer
 
 	mu     sync.Mutex
 	st     Status
 	etag   string
 	asking chan struct{}
+
+	installing bool
+	proxy      atomic.Pointer[url.URL]
+	proxyPath  string
 }
 
 // New returns a checker for the running version.
 func New(repo, version string, enabled bool, log *slog.Logger) *Checker {
-	return &Checker{Repo: repo, API: "https://api.github.com", Enabled: enabled, Log: log,
+	c := &Checker{Repo: repo, API: githubAPI, Enabled: enabled, Log: log,
 		Client: &http.Client{Timeout: 15 * time.Second}, asking: make(chan struct{}, 1),
 		st: Status{Enabled: enabled, Current: version}}
+	c.Client.Transport = c.transport()
+	return c
 }
 
 // Status returns the last known answer.
 func (c *Checker) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.st
+	st := c.st
+	if _, ok := parse(st.Current); ok && c.Installer != nil {
+		st.Installable = true
+		if r, ok := readRecord(Dir(c.Installer.Data)); ok {
+			st.FailedLast = r.FailedVersion
+		}
+	}
+	return st
 }
 
 // Run looks a minute after the start and twice a day from then on.
@@ -89,6 +112,11 @@ func (c *Checker) Check(ctx context.Context) Status {
 		return st
 	}
 	rel, err := c.latest(ctx)
+	c.remember(rel, err)
+	return c.Status()
+}
+
+func (c *Checker) remember(rel *release, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.st.CheckedMS = time.Now().UnixMilli()
@@ -100,7 +128,6 @@ func (c *Checker) Check(ctx context.Context) Status {
 		c.st.Latest, c.st.URL, c.st.Notes, c.st.Published = strings.TrimPrefix(rel.Tag, "v"), rel.URL, rel.Body, rel.Published
 		c.st.Newer = Newer(c.st.Latest, c.st.Current)
 	}
-	return c.st
 }
 
 type release struct {
@@ -123,7 +150,7 @@ func (c *Checker) latest(ctx context.Context) (*release, error) {
 	}
 	res, err := c.Client.Do(req)
 	if err != nil {
-		return nil, errors.New("连不上 GitHub")
+		return nil, c.unreachable()
 	}
 	defer res.Body.Close()
 	switch res.StatusCode {
