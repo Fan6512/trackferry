@@ -26,7 +26,7 @@ func TestCacheAndMissing(t *testing.T) {
 		s.cacheLimit(w, r)
 		return w.Code
 	}
-	if put(`{"limit_mb":-1}`) != 400 || put(`{}`) != 400 || put(`{"limit_mb":2048}`) != 200 || c.Status().LimitMB != 2048 {
+	if put(`{"limit_mb":-2}`) != 400 || put(`{"limit_mb":-1}`) != 200 || c.Status().LimitMB != cache.NoLimit || put(`{}`) != 400 || put(`{"limit_mb":2048}`) != 200 || c.Status().LimitMB != 2048 {
 		t.Fatal(c.Status())
 	}
 	if v, _ := s.Store.Setting(t.Context(), SettingCache); v != "2048" {

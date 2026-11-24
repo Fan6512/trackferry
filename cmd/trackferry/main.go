@@ -523,7 +523,7 @@ func healthcheck() error {
 // cacheLimit is the cache's limit in MB as set on the settings page.
 func cacheLimit(ctx context.Context, st *store.Store) int {
 	v, err := st.Setting(ctx, api.SettingCache)
-	if n, e := strconv.Atoi(v); err == nil && e == nil && n >= 0 && n <= cache.MaxMB {
+	if n, e := strconv.Atoi(v); err == nil && e == nil && cache.Valid(n) {
 		return n
 	}
 	return cache.DefaultMB

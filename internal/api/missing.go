@@ -59,7 +59,7 @@ func (s *Server) cacheStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Cache.Status())
 }
 
-// SettingCache is the cache's limit in MB.
+// SettingCache is the cache's limit in MB, or cache.NoLimit.
 const SettingCache = "cache.limit_mb"
 
 func (s *Server) cacheLimit(w http.ResponseWriter, r *http.Request) {
@@ -69,8 +69,8 @@ func (s *Server) cacheLimit(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.LimitMB == nil || *req.LimitMB < 0 || *req.LimitMB > cache.MaxMB {
-		writeError(w, http.StatusBadRequest, "bad_limit", "上限要在 0 到 100 GB 之间")
+	if req.LimitMB == nil || !cache.Valid(*req.LimitMB) {
+		writeError(w, http.StatusBadRequest, "bad_limit", "上限要在 0 到 100 GB 之间，或者不限")
 		return
 	}
 	if err := s.Store.SetSetting(r.Context(), SettingCache, strconv.Itoa(*req.LimitMB)); err != nil {

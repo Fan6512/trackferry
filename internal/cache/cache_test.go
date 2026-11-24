@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"trackferry/internal/online"
 )
@@ -93,10 +95,97 @@ func TestKeepServeAndEvict(t *testing.T) {
 	if _, err := open(ctx, ""); err == nil || err.Error() != "remote" || c.Find("ask1") != nil {
 		t.Fatal(err)
 	}
+	c.SetLimit(NoLimit) // keeps everything, as long as the disk has room
+	had := c.Status().Songs
+	for i := range 5 {
+		put("more" + string(rune('a'+i)))
+	}
+	if s := c.Status(); s.Songs != had+5 || s.LimitMB != NoLimit {
+		t.Fatal(s)
+	}
+	c.free = func(string) (int64, error) { return keepFree, nil }
+	if c.Keep(ctx, song("full"), "x", from(b, int64(len(b)))) == nil {
+		t.Fatal("kept a song on a full disk")
+	}
+	if again, err := Open(dir, "", NoLimit, log); err != nil || again.Status().Songs != had+5 {
+		t.Fatal(err)
+	}
 	c.SetLimit(0)
 	if c.Status().Songs != 0 || c.Keep(ctx, song("1"), "", dead) != nil {
 		t.Fatal(c.Status())
 	}
+}
+
+func TestNames(t *testing.T) {
+	for _, x := range [][3]string{
+		{"晴天", "周杰伦", "晴天-周杰伦"},
+		{"晴天", "", "晴天"},
+		{"", "", "未知歌曲"},
+		{"../a\\b: c?", " 甲/乙 ", "&a&b c-甲&乙"},
+		{"a\x00\nb\u200b", "..", "ab"},
+	} {
+		if got := baseName(online.Saved{Title: x[0], Artist: x[1]}); got != x[2] {
+			t.Errorf("%q, want %q", got, x[2])
+		}
+	}
+	long := baseName(online.Saved{Title: strings.Repeat("长", 300), Artist: strings.Repeat("a", 300)})
+	if len(long) > 220 || !utf8.ValidString(long) {
+		t.Error(len(long))
+	}
+	for _, n := range []string{"", ".mp3", "../x.mp3", "a/b.mp3", "x.db"} {
+		if ownName(n) {
+			t.Error(n)
+		}
+	}
+}
+
+func TestFilesAreNamedAfterTheSong(t *testing.T) {
+	ctx, dir, log := context.Background(), t.TempDir(), slog.New(slog.DiscardHandler)
+	b := audio(200 << 10)
+	os.WriteFile(dir+"/晴天-周杰伦.mp3", []byte("mine"), 0o600)
+	open := func() *Cache {
+		t.Helper()
+		c, err := Open(dir, "", 10, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.free = func(string) (int64, error) { return 1 << 40, nil }
+		return c
+	}
+	c := open()
+	has := func(name string, want bool) {
+		t.Helper()
+		if _, err := os.Stat(dir + "/" + name); (err == nil) != want {
+			t.Fatal(name, err)
+		}
+	}
+	for _, id := range []string{"1", "2"} { // the same song twice
+		f := online.Saved{Source: "kuwo", ID: id, Title: "晴天", Artist: "周杰伦"}.Found()
+		if err := c.Keep(ctx, f, "ask"+id, from(b, int64(len(b)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	has("晴天-周杰伦 (2).mp3", true)
+	has("晴天-周杰伦 (3).mp3", true)
+	// Kept by 1.2.0: under the key, without a name in the index.
+	for k, e := range c.songs {
+		os.Rename(c.file(k), dir+"/"+k+".mp3")
+		e.File = ""
+	}
+	c.save()
+	if c = open(); c.Status().Songs != 2 {
+		t.Fatal(c.Status())
+	}
+	has("晴天-周杰伦 (2).mp3", true)
+	has("晴天-周杰伦 (3).mp3", true)
+	r, err := c.Opener(c.Find("ask1"), dead)(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	c.Clear()
+	has("晴天-周杰伦 (2).mp3", false)
+	has("晴天-周杰伦.mp3", true) // not ours
 }
 
 func TestClearStopsWhatIsDownloading(t *testing.T) {

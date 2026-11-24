@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type CacheStatus, type SourceHealth } from '../api';
 import { clock } from '../copy';
+import { Pick } from './Pick';
 import { Setting, WavesIcon, type Light } from './Setting';
 import { SourceIcon } from './SourceIcon';
 import { ms, stopLabel } from '../route';
@@ -9,6 +10,9 @@ function size(bytes: number) {
   const mb = bytes / 2 ** 20;
   return mb < 1024 ? `${Math.round(mb)} MB` : `${+(mb / 1024).toFixed(1)} GB`;
 }
+
+/** The cache's limit that is none. */
+const NO_LIMIT = -1;
 
 export function Sources({ onLight }: { onLight: (l: Light) => void }) {
   const [sources, setSources] = useState<SourceHealth[]>([]);
@@ -59,10 +63,9 @@ export function Sources({ onLight }: { onLight: (l: Light) => void }) {
       </ul>
       {cache && (
         <div className="kept">
-          <div><b>听过的歌留一份</b><small>{cache.limit_mb ? <>已存 <span className="num">{cache.songs}</span> 首，{size(cache.bytes)}。没存满不会删，满了先删最久没听的。{cache.mounted ? '放在挂载的缓存盘' : '放在 data/cache'}</> : '已关闭，每次都从线上取'}</small></div>
-          <select value={cache.limit_mb} onChange={(e) => limit(Number(e.target.value))} aria-label="缓存上限">
-            {[...new Set([0, 1024, 2048, 5120, 10240, 20480, cache.limit_mb])].sort((a, b) => a - b).map((m) => <option key={m} value={m}>{m ? `最多 ${size(m * 2 ** 20)}` : '关闭'}</option>)}
-          </select>
+          <div><b>听过的歌留一份</b><small>{cache.limit_mb ? <>已存 <span className="num">{cache.songs}</span> 首，{size(cache.bytes)}。{cache.limit_mb === NO_LIMIT ? '不会删，磁盘只剩 1 GB 时不再存新的。' : '没存满不会删，满了先删最久没听的。'}{cache.mounted ? '放在挂载的缓存盘' : '放在 data/cache'}</> : '已关闭，每次都从线上取'}</small></div>
+          <Pick label="缓存上限" value={cache.limit_mb} onPick={limit}
+            choices={[...[...new Set([0, 1024, 2048, 5120, 10240, 20480, 51200, Math.max(0, cache.limit_mb)])].sort((a, b) => a - b), NO_LIMIT].map((m) => ({ value: m, label: m === NO_LIMIT ? '不限' : m ? `最多 ${size(m * 2 ** 20)}` : '关闭' }))} />
           {cache.songs > 0 && (clearing
             ? <span className="kept-sure"><button className="btn btn-small btn-danger" onClick={() => change(api.clearCache())}>清空</button><button className="btn btn-small btn-quiet" onClick={() => setClearing(false)}>取消</button></span>
             : <button className="btn btn-small btn-quiet" onClick={() => setClearing(true)}>清空</button>)}

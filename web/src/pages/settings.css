@@ -37,6 +37,10 @@
 @media (max-width: 860px) { .st-proxy { padding-left: 20px; } }
 
 .kept { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; margin-top: 18px; padding-top: 20px; border-top: 1px solid var(--line); } .kept > div { flex: 1 1 260px; display: grid; } .kept b { font-weight: 420; } .kept small { color: var(--ink3); } .kept-sure { display: inline-flex; gap: 8px; }
-.kept select { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--well); color: var(--ink); font: inherit; } .kept option { color: #10181b; background: #fff; }
+.pick { position: relative; display: inline-flex; min-width: 152px; }
+.pick-btn { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--well); text-align: left; white-space: nowrap; transition: background .18s, border-color .18s; }
+.pick-btn:hover, .pick-btn[aria-expanded=true] { border-color: var(--ink3); background: rgb(246 243 236 / .08); } .pick-btn svg { flex: none; color: var(--ink2); transition: transform .3s var(--out); } .pick-btn[aria-expanded=true] svg { transform: rotate(180deg); }
+.pick-menu { left: auto; right: 0; width: 100%; min-width: 0; padding: 6px; transform-origin: 80% 100%; } .pick-menu.menu-down { transform-origin: 80% 0; }
+.pick-menu [role=option] { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 0 10px; border-radius: 4px; color: var(--ink2); white-space: nowrap; cursor: pointer; } .pick-menu .at { background: rgb(246 243 236 / .13); color: var(--ink); } .pick-menu [aria-selected=true] { color: var(--stone); }
 
 .ha-token { display: grid; gap: 12px; justify-items: start; } .ha-token code { max-width: 100%; padding: 12px 16px; border-radius: 6px; background: var(--well); overflow-wrap: anywhere; user-select: all; }

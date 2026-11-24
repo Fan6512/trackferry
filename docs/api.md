@@ -42,7 +42,7 @@
 | `GET /api/library/search?q=` · `/shelf` · `/albums/{id}` · `/artist` | 搜索与浏览 |
 | `GET /api/library/tracks/{id}/lyrics` | 歌词 |
 | `GET /api/library/missing` · `/api/library/missing.csv` | 缺歌清单（`owned` 为已补上）；导出还缺的 |
-| `GET /api/cache` · `PUT` `{"limit_mb": 1024}` · `DELETE` | 线上歌曲缓存的用量；上限，`0` 为关闭；清空 |
+| `GET /api/cache` · `PUT` `{"limit_mb": 1024}` · `DELETE` | 线上歌曲缓存的用量；上限，`0` 为关闭，`-1` 为不限；清空 |
 | `GET·PUT /api/library/tracks/{id}/favorite` | 收藏 |
 | `GET /api/cover/{id}` | 封面 |
 | `PATCH /api/sources/{kuwo\|kugou\|migu}` | 音源开关 |

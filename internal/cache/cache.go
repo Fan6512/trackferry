@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,8 +27,9 @@ import (
 	"trackferry/internal/online"
 )
 
-// Limits. The limit is in MB; 0 switches the cache off.
+// Limits. The limit is in MB; 0 switches the cache off, NoLimit lets it grow.
 const (
+	NoLimit   = -1
 	DefaultMB = 1024
 	MaxMB     = 100 << 10
 	maxSong   = 200 << 20
@@ -36,12 +38,23 @@ const (
 	maxAsked  = 20
 )
 
+// Valid reports whether mb can be a limit.
+func Valid(mb int) bool { return mb >= NoLimit && mb <= MaxMB }
+
+func toBytes(mb int) int64 {
+	if mb == NoLimit {
+		return math.MaxInt64
+	}
+	return int64(mb) << 20
+}
+
 // Opener opens a song's audio at its platform.
 type Opener = func(ctx context.Context, rng string) (*http.Response, error)
 
 type entry struct {
 	Song   online.Saved `json:"song"`
 	Asked  []string     `json:"asked"` // requests this song answered
+	File   string       `json:"file"`  // its name; before 1.2.1 it was the key
 	Size   int64        `json:"size"`
 	UsedMS int64        `json:"used_ms"`
 }
@@ -73,7 +86,7 @@ type Cache struct {
 // Open reads the cache in dir. The audio is in there too, or in mount if there is one; then
 // what dir still holds from before is removed.
 func Open(dir, mount string, limitMB int, log *slog.Logger) (*Cache, error) {
-	c := &Cache{dir: dir, audio: dir, log: log, free: free, limit: int64(limitMB) << 20, songs: map[string]*entry{}}
+	c := &Cache{dir: dir, audio: dir, log: log, free: free, limit: toBytes(limitMB), songs: map[string]*entry{}}
 	c.read = c.serve
 	if mount != "" {
 		c.audio = mount
@@ -90,8 +103,7 @@ func Open(dir, mount string, limitMB int, log *slog.Logger) (*Cache, error) {
 		}
 		f.Close()
 		os.Remove(f.Name())
-		c.sweep(dir)
-		os.Remove(filepath.Join(dir, "index.json"))
+		c.leave(dir)
 	}
 	if raw, err := os.ReadFile(c.index()); err == nil {
 		if json.Unmarshal(raw, &c.songs) != nil || c.songs == nil {
@@ -99,6 +111,10 @@ func Open(dir, mount string, limitMB int, log *slog.Logger) (*Cache, error) {
 		}
 	}
 	for k, e := range c.songs {
+		if e != nil && e.File != "" && !ownName(e.File) {
+			delete(c.songs, k)
+			continue
+		}
 		fi, err := os.Stat(c.file(k))
 		if e == nil || len(k) != 64 || err != nil || fi.Size() != e.Size {
 			delete(c.songs, k)
@@ -107,13 +123,68 @@ func Open(dir, mount string, limitMB int, log *slog.Logger) (*Cache, error) {
 	c.sweep(c.audio) // what a crash left behind
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.rename()
 	c.trim(0)
 	c.save()
 	return c, nil
 }
 
-func (c *Cache) mounted() bool          { return c.audio != c.dir }
-func (c *Cache) file(key string) string { return filepath.Join(c.audio, key+".mp3") }
+func (c *Cache) mounted() bool { return c.audio != c.dir }
+
+// file is where a song is. The caller holds the lock.
+func (c *Cache) file(key string) string {
+	name := key + ".mp3"
+	if e := c.songs[key]; e != nil && e.File != "" {
+		name = e.File
+	}
+	return filepath.Join(c.audio, name)
+}
+
+func (c *Cache) taken(name string) bool {
+	for _, e := range c.songs {
+		if strings.EqualFold(e.File, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// rename gives songs kept before 1.2.1 their names. The index goes first: a file it does not
+// name under its old key is swept, one it names wrongly is fetched again.
+func (c *Cache) rename() {
+	old := map[string]string{}
+	for k, e := range c.songs {
+		if e.File == "" {
+			old[k] = c.file(k)
+			e.File = freeName(c.audio, e.Song, e.Size, c.taken)
+		}
+	}
+	if len(old) == 0 {
+		return
+	}
+	c.save()
+	for k, from := range old {
+		if os.Rename(from, c.file(k)) != nil {
+			os.Remove(from)
+			delete(c.songs, k)
+		}
+	}
+}
+
+// leave removes what dir holds from before the mount.
+func (c *Cache) leave(dir string) {
+	index := filepath.Join(dir, "index.json")
+	var songs map[string]*entry
+	if raw, err := os.ReadFile(index); err == nil && json.Unmarshal(raw, &songs) == nil {
+		for _, e := range songs {
+			if e != nil && ownName(e.File) {
+				os.Remove(filepath.Join(dir, e.File))
+			}
+		}
+	}
+	c.sweep(dir)
+	os.Remove(index)
+}
 
 // index is another file for a mount, so that one start without it forgets nothing.
 func (c *Cache) index() string {
@@ -123,7 +194,7 @@ func (c *Cache) index() string {
 	return filepath.Join(c.dir, "index.json")
 }
 
-// sweep removes our audio that no song of ours is in. Anything else there stays.
+// sweep removes half downloads, and audio under a key that no song of ours is in. Anything else there stays.
 func (c *Cache) sweep(dir string) {
 	files, _ := os.ReadDir(dir)
 	for _, f := range files {
@@ -244,7 +315,10 @@ type section struct {
 }
 
 func (c *Cache) serve(key, rng string) (*http.Response, error) {
-	f, err := os.Open(c.file(key))
+	c.mu.Lock()
+	path := c.file(key)
+	c.mu.Unlock()
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -331,13 +405,15 @@ func (c *Cache) Keep(ctx context.Context, f *online.Found, asked string, remote 
 		return nil
 	}
 	c.trim(n)
-	if err := os.Rename(tmp, c.file(key)); err != nil {
-		return err
-	}
-	e = &entry{Song: s, Size: n, UsedMS: time.Now().UnixMilli()}
+	e = &entry{Song: s, File: freeName(c.audio, s, n, c.taken), Size: n, UsedMS: time.Now().UnixMilli()}
 	c.answer(e, asked)
 	c.songs[key] = e
-	c.save()
+	c.save() // first, so that no crash leaves a file nobody knows
+	if err := os.Rename(tmp, c.file(key)); err != nil {
+		delete(c.songs, key)
+		c.save()
+		return err
+	}
 	return nil
 }
 
@@ -436,7 +512,7 @@ func (c *Cache) save() {
 func (c *Cache) SetLimit(mb int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.limit = int64(mb) << 20
+	c.limit = toBytes(mb)
 	c.trim(0)
 	c.save()
 }
@@ -458,6 +534,9 @@ func (c *Cache) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := Status{Mounted: c.mounted(), LimitMB: int(c.limit >> 20), Songs: len(c.songs)}
+	if c.limit == math.MaxInt64 {
+		s.LimitMB = NoLimit
+	}
 	for _, e := range c.songs {
 		s.Bytes += e.Size
 	}
