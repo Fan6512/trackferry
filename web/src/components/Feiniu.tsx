@@ -16,6 +16,8 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
   const [manual, setManual] = useState(false);
   const [user, setUser] = useState('');
   const [pw, setPw] = useState('');
+  const [code, setCode] = useState('');
+  const [gate, setGate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +47,7 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
       return true;
     } catch (e) {
       setError((e as ApiError).message);
+      if ((e as ApiError).code === 'feiniu_gate') setGate(true);
       return false;
     } finally {
       setBusy(false);
@@ -52,7 +55,7 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (await act(() => api.linkFeiniu(base.trim() || info!.feiniu.base || '', user.trim(), pw))) setEditing(false);
+    if (await act(() => api.linkFeiniu(base.trim() || info!.feiniu.base || '', user.trim(), pw, code.trim()))) { setEditing(false); setCode(''); }
     setPw('');
   };
 
@@ -79,6 +82,7 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
   if (!info || !lib) return <Setting id="feiniu" icon={<SourceIcon name="library" />} title="飞牛音乐">{error ? <Notice tone="error" title={error} /> : <span className="spinner" />}</Setting>;
   const f = info.feiniu;
   const form = editing || !f.linked || f.expired;
+  const asksCode = gate || f.code || !!code || !!found?.servers.some((s) => s.gate && s.base === base);
   const n = (v: number) => v.toLocaleString('zh-CN');
   const last = lib.last;
 
@@ -115,7 +119,7 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
             <div className="finder" aria-live="polite">
               {looking ? <p><span className="radar" aria-hidden="true" />正在找飞牛音乐</p> : found && found.servers.length > 0 ? (
                 <ul>{found.servers.map((s) => (
-                  <li key={s.base}><button type="button" aria-pressed={!manual && base === s.base} onClick={() => { setManual(false); setBase(s.base); }}><b>{s.name || '飞牛'}</b><span>飞牛音乐 {s.version}</span><small>{s.base.includes('127.0.0.1') ? '就在这台 NAS 上' : s.base.replace('https://', '')}</small></button></li>
+                  <li key={s.base}><button type="button" aria-pressed={!manual && base === s.base} onClick={() => { setManual(false); setBase(s.base); }}><b>{s.name || '飞牛'}</b><span>{s.gate ? '开了访问码' : `飞牛音乐 ${s.version}`}</span><small>{s.base.includes('127.0.0.1') ? '就在这台 NAS 上' : s.base.replace('https://', '')}</small></button></li>
                 ))}</ul>
               ) : found && (
                 found.relay ? <p>NAS 上的飞牛音乐没有应答，确认它已安装并启动。</p> : found.blocked.length ? <div className="blocked"><p>容器连不到这台 NAS。在 compose.yaml 里用 host 网络，再执行：</p><pre>docker compose up -d</pre></div> : <p>附近没有找到飞牛音乐，确认它已安装并启动。</p>
@@ -125,8 +129,11 @@ export function FeiniuCard({ onLight }: { onLight: (l: Light) => void }) {
             {manual && <label className="field"><span>地址</span><input value={base} onChange={(e) => setBase(e.target.value)} placeholder={f.base || info.suggested || 'https://NAS 的地址:5667'} autoCapitalize="off" spellCheck={false} /></label>}
             <label className="field"><span>用户名</span><input value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} required /></label>
             <label className="field"><span>密码</span><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="off" required /></label>
+            {asksCode
+              ? <label className="field"><span>访问码</span><input type="password" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" placeholder={f.code ? '没改过就留空' : '飞牛设置的访问码'} /></label>
+              : <p className="hint"><button type="button" className="link" onClick={() => setGate(true)}>飞牛开了访问码</button></p>}
             <div className="card-actions"><button className="btn btn-primary" disabled={busy || looking || !(base.trim() || f.base) || !user.trim() || !pw}>{busy ? <><span className="spinner spinner-tiny" />正在连接</> : '连接'}</button>{editing && <button type="button" className="btn btn-quiet" onClick={() => setEditing(false)}>取消</button>}</div>
-            <p className="hint">密码只用于登录，不保存。平时用飞牛账号授权登录的用户，要先在飞牛音乐里设过密码。</p>
+            <p className="hint">密码只用于登录，不保存。{asksCode && '访问码存在这台飞牛上，通行过期后自动再验。'}平时用飞牛账号授权登录的用户，要先在飞牛音乐里设过密码。</p>
           </form>
         )}
         {error && <p className="field-error" role="alert">{error}</p>}

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { Device } from '../api';
 import { deviceTitle } from '../copy';
 import { connected } from '../ear';
@@ -13,10 +14,16 @@ function Body() {
 export function Ears({ devices, value, onChange }: { devices: Device[]; value: string; onChange: (id: string) => void }) {
   const live = useLive();
   const list = connected(devices);
+  const box = useRef<HTMLDivElement>(null);
+  // The chosen one may lie off the edge of a narrow rail.
+  useEffect(() => {
+    const b = box.current, a = b?.querySelector<HTMLElement>('[aria-pressed=true]');
+    if (b && a) b.scrollTo({ left: a.offsetLeft - (b.clientWidth - a.offsetWidth) / 2, behavior: 'smooth' });
+  }, [value, list.length]);
   if (list.length < 2) return null;
   const busy = list.filter((d) => onSpeaker(live.flows, d.device_id)).length;
   return (
-    <div className="spks" role="group" aria-label="看哪台音箱">
+    <div className="spks" ref={box} role="group" aria-label="看哪台音箱">
       <button type="button" aria-pressed={!value} onClick={() => onChange('')}>
         <i><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M5 15V9M10 19V5M15 16V8M20 13.5v-3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></i>
         <span><b>全部</b><small>{busy ? `${busy} 台在放` : `${list.length} 台`}</small></span>

@@ -169,10 +169,24 @@ func (r *Router) Decide(ctx context.Context, in intent.Intent, query string) *Ro
 		rt.Reason = "播放控制由小爱处理"
 		return rt
 	case intent.KindArtist, intent.KindRandom:
+		// "范特西的专辑" may be an album by its name.
+		if in.Kind == intent.KindArtist && strings.Contains(query, "专辑") && len(r.Library.ArtistIDs(in.Artist)) == 0 {
+			if as := r.Library.FindAlbums(in.Artist, ""); len(as) > 0 {
+				r.album(rt, intent.Intent{Kind: intent.KindList, Control: intent.ListAlbum, Title: in.Artist}, 0)
+				tr.Layer("library", rt.Layers[0])
+				return rt
+			}
+		}
 		r.pick(rt, in)
 		tr.Layer("library", rt.Layers[0])
 		return rt
 	case intent.KindList:
+		if in.Control == intent.ListAlbum {
+			prev, _ := ctx.Value(prevKey{}).(Previous)
+			r.album(rt, in, prev.Track)
+			tr.Layer("library", rt.Layers[0])
+			return rt
+		}
 		tr.Layer("library", Layer{Name: "library", State: online.StateAsking, Candidates: []Candidate{}})
 		r.list(ctx, rt, in)
 		tr.Layer("library", rt.Layers[0])

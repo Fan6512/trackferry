@@ -131,10 +131,13 @@ type Engine struct {
 	Deep func(ctx context.Context, deviceID string, on bool) error
 	// Style is how a speaker is kept quiet; optional.
 	Style func(deviceID string) string
+	// Floor is the least volume of a speaker, which 0 leads to; optional.
+	Floor func(deviceID string) int
 
 	mu      sync.Mutex
 	devs    map[string]*device
-	volumes map[string]int // as last seen, never 0
+	checks  []time.Duration
+	volumes map[string]known
 }
 
 type device struct {
@@ -142,6 +145,9 @@ type device struct {
 	cancel context.CancelCauseFunc
 	gen    int
 	hold   int // runs and answers that own the speaker's volume right now
+	// letGo is when the last of them ended.
+	letGo   time.Time
+	touched int // counts what was done to the volume
 	// released is closed when the user spoke a command that Xiao AI keeps: the guard must
 	// stop fighting whatever she plays next.
 	released chan struct{}
@@ -160,7 +166,7 @@ type device struct {
 
 // New returns an Engine.
 func New(sp Speaker, st *store.Store, log *slog.Logger, timing Timing) *Engine {
-	return &Engine{sp: prompt{sp}, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}, volumes: map[string]int{}}
+	return &Engine{sp: prompt{sp}, st: st, log: log, timing: timing, now: time.Now, devs: map[string]*device{}, checks: checkAfter, volumes: map[string]known{}}
 }
 
 // Start begins a takeover in the background, cancelling any run in progress on the same
@@ -362,8 +368,8 @@ func (r *runner) tell() {
 func (r *runner) status() (xiaomi.PlayStatus, error) {
 	p, err := r.e.sp.PlayStatus(r.ctx, r.req.DeviceID)
 	if err == nil {
-		if !r.e.held(r.req.DeviceID) {
-			r.e.know(r.req.DeviceID, p.Volume)
+		if r.e.calm(r.req.DeviceID) {
+			r.e.learn(r.req.DeviceID, p.Volume)
 		}
 		r.req.Trace.Player(live.Player{Status: p.Status, Position: p.Position, Duration: p.Duration, Volume: p.Volume,
 			Ours: p.Playing() && (p.AudioID == "" || p.AudioID == xiaomi.OurAudioID), Held: r.held, Elapsed: r.elapsed.Milliseconds(), Phase: r.phase})
@@ -687,7 +693,7 @@ func (e *Engine) putBack(dev string, volume int) (int, error) {
 		if err == nil && lifted && v > 0 {
 			// And it may take effect after it was answered.
 			e.sleep(c, liftLag)
-			if p, serr := e.sp.PlayStatus(c, dev); serr != nil || p.Volume == 0 {
+			if p, serr := e.sp.PlayStatus(c, dev); serr != nil || v > e.floor(dev) && p.Volume <= e.floor(dev) {
 				err = e.sp.SetVolume(c, dev, v)
 			}
 		}
@@ -705,6 +711,7 @@ func (e *Engine) putBack(dev string, volume int) (int, error) {
 			break
 		}
 	}
+	e.check(dev, volume)
 	return volume, err
 }
 
@@ -729,6 +736,7 @@ func (e *Engine) letGo(d *device) func() {
 	return sync.OnceFunc(func() {
 		e.mu.Lock()
 		d.hold--
+		d.letGo = e.now()
 		e.mu.Unlock()
 	})
 }
@@ -786,7 +794,7 @@ func (e *Engine) recoverVolume(ctx context.Context, dev string, v int) {
 	if err != nil || e.held(dev) {
 		return
 	}
-	if p.Volume > 0 { // somebody turned it up already, or the mute never arrived
+	if p.Volume > e.floor(dev) { // somebody turned it up already, or the mute never arrived
 		e.st.ClearPendingVolume(ctx, dev)
 		return
 	}

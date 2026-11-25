@@ -13,6 +13,7 @@ type Previous struct {
 	Title  string
 	Artist string
 	Tried  []string // singers already played
+	Track  int64    // in the library; 0 = not there
 }
 
 type prevKey struct{}

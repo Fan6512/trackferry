@@ -1,3 +1,4 @@
+import { Sheet } from './Sheet';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type Device } from '../api';
@@ -12,7 +13,7 @@ export function Play({ send, title, devices, label }: { send: (device: string) =
   const box = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!open) return;
-    const off = (e: Event) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !box.current?.contains(e.target as Node)) setOpen(false); };
+    const off = (e: Event) => { if (document.querySelector('dialog[open]')) return; if (e instanceof KeyboardEvent ? e.key === 'Escape' : !box.current?.contains(e.target as Node)) setOpen(false); };
     addEventListener('pointerdown', off);
     addEventListener('keydown', off);
     return () => { removeEventListener('pointerdown', off); removeEventListener('keydown', off); };
@@ -41,7 +42,12 @@ export function Play({ send, title, devices, label }: { send: (device: string) =
         <svg viewBox="0 0 12 14" width="11" height="13" aria-hidden="true"><path d="M1 1l10 6-10 6z" fill="currentColor" /></svg>
         {label}
       </button>
-      {open && (
+      {open && matchMedia('(max-width: 760px)').matches ? (
+        <Sheet title="在哪里播放" onClose={() => setOpen(false)}>
+          {targets.length === 0 && <p className="muted">没有接入的音箱，先到音箱页接入一台。</p>}
+          <div className="picks">{targets.map((d) => <button key={d.device_id} type="button" onClick={() => play(d)}><i><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="5" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M9 6.5h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><circle cx="12" cy="14.5" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></i><span><b>{deviceTitle(d)}</b></span></button>)}</div>
+        </Sheet>
+      ) : open && (
         <span className={`menu ${down ? 'menu-down' : ''}`} role="menu">
           <span className="menu-head">在哪里播放</span>
           {targets.length === 0 && <span className="menu-empty">没有接入的音箱</span>}

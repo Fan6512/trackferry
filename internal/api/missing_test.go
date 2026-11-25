@@ -38,3 +38,25 @@ func TestCacheAndMissing(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 }
+
+func TestDismissMissing(t *testing.T) {
+	s, _ := newServer(t)
+	s.Library = library.New(t.TempDir(), s.Store, slog.New(slog.DiscardHandler))
+	ask := func(body string) int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		s.libraryMissingDismiss(w, r)
+		return w.Code
+	}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	if ask(`{"title":""}`) != 400 || ask(`{"title":"海阔天空","artist":"Beyond/黄家驹"}`) != 200 || ask(`{"title":"海阔天空","artist":"Beyond"}`) != 200 {
+		t.Fatal("codes")
+	}
+	if g := s.dismissed(r); len(g) != 1 || !g[0].same(song{"海阔天空", "beyond"}) || g[0].same(song{"海阔天空", "信乐团"}) {
+		t.Fatal(g)
+	}
+	if ask(`{"title":"海阔天空","artist":"Beyond","back":true}`) != 200 || len(s.dismissed(r)) != 0 {
+		t.Fatal("not put back")
+	}
+}

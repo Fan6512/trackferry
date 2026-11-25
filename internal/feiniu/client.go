@@ -52,6 +52,9 @@ type Session struct {
 	LinkedAt time.Time `json:"linked_at"`
 	Server   string    `json:"server"`
 	Version  string    `json:"version"`
+	// Code is the access code of the NAS, "" when it asks for none. What it is exchanged for
+	// ends on its own, so it is needed again.
+	Code string `json:"code,omitempty"`
 }
 
 // client is one NAS address. pin, when set, is the only certificate accepted; NAS
@@ -60,6 +63,7 @@ type Session struct {
 type client struct {
 	base  string
 	token string
+	gate  *gate
 	http  *http.Client // JSON and images
 	audio *http.Client // no overall timeout
 	seen  *string      // when set, receives the certificate's fingerprint
@@ -98,7 +102,7 @@ func newClient(base, token, pin string) *client {
 		MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second,
 	}
 	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &client{base: base, token: token,
+	return &client{base: base, token: token, gate: newGate(""),
 		http:  &http.Client{Transport: tr, Timeout: 30 * time.Second, CheckRedirect: noRedirect},
 		audio: &http.Client{Transport: tr, CheckRedirect: noRedirect}}
 }
@@ -195,13 +199,9 @@ func decode(body io.Reader, out any) error {
 }
 
 func (c *client) call(ctx context.Context, method, path string, q url.Values, body, out any) error {
-	req, err := c.request(ctx, method, path, q, body)
+	resp, err := c.do(c.http, func() (*http.Request, error) { return c.request(ctx, method, path, q, body) })
 	if err != nil {
 		return err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return clean(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -213,25 +213,20 @@ func (c *client) call(ctx context.Context, method, path string, q url.Values, bo
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("飞牛音乐返回 HTTP %d", resp.StatusCode)
 	}
-	if c.seen != nil && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
-		sum := sha256.Sum256(resp.TLS.PeerCertificates[0].Raw)
-		*c.seen = hex.EncodeToString(sum[:])
-	}
 	return decode(resp.Body, out)
 }
 
 // media opens a binary endpoint. Refusals arrive as JSON with HTTP 200.
 func (c *client) media(ctx context.Context, hc *http.Client, path string, q url.Values, rng string) (*http.Response, error) {
-	req, err := c.request(ctx, http.MethodGet, path, q, nil)
+	resp, err := c.do(hc, func() (*http.Request, error) {
+		req, err := c.request(ctx, http.MethodGet, path, q, nil)
+		if err == nil && rng != "" {
+			req.Header.Set("Range", rng)
+		}
+		return req, err
+	})
 	if err != nil {
 		return nil, err
-	}
-	if rng != "" {
-		req.Header.Set("Range", rng)
-	}
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, clean(err)
 	}
 	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
 		return resp, nil

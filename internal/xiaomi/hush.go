@@ -20,6 +20,18 @@ var hushSpecs = map[string]hushSpec{
 	"L06A": {2, 2, 3, 2}, "X08A": {2, 2, 4, 2}, "S12": {2, 2, 4, 1}, "LX01": {2, 2, 4, 1}, "L7A": {2, 2, 4, 1},
 }
 
+// floors by model, from the MIoT specification: the least volume, which 0 leads to.
+var floors = map[string]int{
+	"OH2P": 5, "OH2": 4, "LX04": 5, "LX05": 5, "LX06": 6, "LX5A": 12, "L06A": 6, "X08A": 5, "L7A": 3, "LX01": 1, "S12": 1,
+	"L05B": 0, "L05C": 0, "L15A": 0, "L16A": 0, "L17A": 0,
+}
+
+// VolumeFloor is the least volume a model goes down to. Readings may be one off.
+func VolumeFloor(hardware string) (int, bool) {
+	n, ok := floors[strings.ToUpper(hardware)]
+	return n + 1, ok
+}
+
 // CanHush reports whether a speaker can be muted through Mi Home.
 func CanHush(hardware, did string) bool {
 	_, ok := hushSpecs[strings.ToUpper(hardware)]

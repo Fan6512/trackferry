@@ -38,6 +38,81 @@ type queue struct {
 	first *routing.Route // song 0: one that is not in the library
 	solo  bool           // a single song: nothing follows it on its own
 	move  sync.Mutex     // one move at a time
+
+	wishes []Wish // asked for by hand, before the list goes on
+	aside  bool   // what plays is one of these; pos is where the list stands
+}
+
+// Wish is a song to play after the one that is on.
+type Wish struct {
+	Title string
+	Route func(ctx context.Context) (*routing.Route, error) // found anew: audio does not last
+}
+
+// maxWishes bounds what is asked for ahead.
+const maxWishes = 50
+
+// wishFor is how long finding a wish may take.
+const wishFor = 20 * time.Second
+
+// Want plays a song after the one that is on; false: nothing of ours is on.
+func (d *Dispatcher) Want(dev string, w Wish) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	q := d.queues[dev]
+	if q == nil {
+		return false, nil
+	}
+	if len(q.wishes) >= maxWishes {
+		return false, errors.New("排着的歌太多了")
+	}
+	q.wishes = append(q.wishes, w)
+	q.web = true
+	return true, nil
+}
+
+// wish takes the next wish that can be played.
+func (d *Dispatcher) wish(ctx context.Context, q *queue) (*routing.Route, bool) {
+	for {
+		d.mu.Lock()
+		if len(q.wishes) == 0 || d.queues[q.dev] != q {
+			d.mu.Unlock()
+			return nil, false
+		}
+		w := q.wishes[0]
+		q.wishes = q.wishes[1:]
+		d.mu.Unlock()
+		c, cancel := context.WithTimeout(ctx, wishFor)
+		rt, err := w.Route(c)
+		cancel()
+		if err == nil {
+			return rt, true
+		}
+		d.Log.Warn("点播　这首跳过", "歌名", w.Title, "原因", err)
+	}
+}
+
+// choose is what to play when somebody asks for another song.
+func (d *Dispatcher) choose(ctx context.Context, q *queue, by int) (rt *routing.Route, ok bool) {
+	d.mu.Lock()
+	was, id := q.aside, q.ids[q.pos]
+	d.mu.Unlock()
+	if by > 0 {
+		rt, ok = d.wish(ctx, q)
+	}
+	aside := ok
+	if !ok && by < 0 && was { // back to where the list stands
+		rt, ok = d.song(q, id)
+	}
+	if !ok {
+		rt, ok = d.step(q, by)
+	}
+	if ok {
+		d.mu.Lock()
+		q.aside = aside
+		d.mu.Unlock()
+	}
+	return rt, ok
 }
 
 // Modes of a speaker: what comes after a song.
@@ -80,9 +155,10 @@ func (d *Dispatcher) SetPlayMode(ctx context.Context, dev, mode string) error {
 
 // Queue is what a page may know of the list on a speaker.
 type Queue struct {
-	List  string `json:"list"` // empty: a single song
-	At    int    `json:"at"`
-	Total int    `json:"total"`
+	List  string   `json:"list"` // empty: a single song
+	At    int      `json:"at"`
+	Total int      `json:"total"`
+	Next  []string `json:"next"` // asked for by hand, to come first
 }
 
 // Queue tells what plays on a speaker; nil when no song of ours does.
@@ -93,10 +169,15 @@ func (d *Dispatcher) Queue(dev string) *Queue {
 	switch {
 	case q == nil:
 		return nil
-	case q.solo:
-		return &Queue{At: 1, Total: 1}
 	}
-	return &Queue{List: q.list, At: q.pos + 1, Total: len(q.ids)}
+	out := &Queue{List: q.list, At: q.pos + 1, Total: len(q.ids), Next: []string{}}
+	if q.solo {
+		out = &Queue{At: 1, Total: 1, Next: []string{}}
+	}
+	for _, w := range q.wishes {
+		out.Next = append(out.Next, w.Title)
+	}
+	return out
 }
 
 // Why there is no other song.
@@ -116,7 +197,7 @@ func (d *Dispatcher) Skip(ctx context.Context, dev string, by int) error {
 	if d.queued(dev) != q {
 		return ErrNoQueue
 	}
-	rt, ok := d.step(q, by)
+	rt, ok := d.choose(ctx, q, by)
 	if !ok {
 		return ErrNoSong
 	}
@@ -403,6 +484,18 @@ func (d *Dispatcher) advance(q *queue, n int) {
 	}
 	var rt *routing.Route
 	ok := false
+	if rt, ok = d.wish(ctx, q); ok {
+		d.mu.Lock()
+		q.aside = true
+		d.mu.Unlock()
+		if err := d.play(ctx, q, rt, true); err != nil {
+			end(err.Error())
+		}
+		return
+	}
+	d.mu.Lock()
+	q.aside = false
+	d.mu.Unlock()
 	if d.PlayMode(ctx, q.dev) == ModeOne && (q.solo || fails == 0) {
 		rt, ok = d.song(q, id)
 	}
@@ -444,8 +537,14 @@ func (d *Dispatcher) play(ctx context.Context, q *queue, rt *routing.Route, over
 		return ErrNoQueue
 	}
 	ended := d.turn(q)
+	list := q.list
+	d.mu.Lock()
+	if q.aside {
+		list = ""
+	}
+	d.mu.Unlock()
 	d.Remember(q.dev, rt.Title, rt.Artist, rt.TrackID)
-	song := &store.Song{TrackID: rt.TrackID, Title: rt.Title, Artist: rt.Artist, Album: rt.Album, Cover: rt.Cover, DurationMS: rt.DurationMS, List: q.list}
+	song := &store.Song{TrackID: rt.TrackID, Title: rt.Title, Artist: rt.Artist, Album: rt.Album, Cover: rt.Cover, DurationMS: rt.DurationMS, List: list}
 	if _, err := d.Engine.Start(ctx, Request{DeviceID: q.dev, Hardware: q.hardware, Kind: "push", Track: t, Song: song, Trace: tr, Follows: over, Ended: ended}); err != nil {
 		d.mu.Lock()
 		if d.queues[q.dev] == q {
@@ -474,7 +573,7 @@ func (d *Dispatcher) skip(q *queue, c store.Command, hardware string, tr *live.T
 	start := time.Now()
 	q.move.Lock()
 	defer q.move.Unlock()
-	rt, ok := d.step(q, by)
+	rt, ok := d.choose(context.Background(), q, by)
 	if !ok {
 		return nil, Request{}, false
 	}

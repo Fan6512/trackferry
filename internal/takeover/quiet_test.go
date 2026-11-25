@@ -54,7 +54,7 @@ func TestTwoQuietsGiveBackOnce(t *testing.T) {
 
 func TestKnownVolumeNeedsNoAnswerFirst(t *testing.T) {
 	e, sp, st := setup(t)
-	e.know("d1", 33) // turned to 40 since
+	e.know("d1", 33)
 	m := e.mute(context.Background(), "d1")
 	if !m.muted || m.volume == 0 || sp.lastVolume() != 0 {
 		t.Fatalf("%+v", m)

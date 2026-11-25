@@ -102,7 +102,9 @@ func (d *Dispatcher) previous(dev string) (routing.Previous, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	l, ok := d.last[dev]
-	return l.Previous, ok && time.Since(l.at) < followFor
+	p := l.Previous
+	p.Track = l.track
+	return p, ok && time.Since(l.at) < followFor
 }
 
 // Forget says the speaker is no longer on the song it was asked for.

@@ -26,7 +26,7 @@ type Intent struct {
 	Kind    string `json:"kind"`
 	Title   string `json:"title,omitempty"`
 	Artist  string `json:"artist,omitempty"`
-	Control string `json:"control,omitempty"` // pause | resume | next | previous | stop; add | remove | list_add | list_remove; favorites | playlist
+	Control string `json:"control,omitempty"` // pause | resume | next | previous | stop; add | remove | list_add | list_remove; favorites | playlist | album
 	// Follow: only means something right after a song.
 	Follow bool `json:"follow,omitempty"`
 }

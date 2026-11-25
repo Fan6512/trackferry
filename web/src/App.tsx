@@ -5,13 +5,14 @@ import { Stage } from './stage/Stage';
 import { Login, Setup } from './pages/Auth';
 import { Home } from './pages/Home';
 import { Brand } from './components/Mark';
+import { Dock } from './components/Dock';
 import { Fish } from './components/Fish';
 import { Signature } from './components/Signature';
 
 // Pages arrive on their own, right after the first one is up.
 const load = {
   welcome: () => import('./pages/Onboarding'), flow: () => import('./pages/FlowPage'), say: () => import('./pages/Say'),
-  library: () => import('./pages/Library'), speakers: () => import('./pages/Speakers'), account: () => import('./pages/Account'),
+  search: () => import('./pages/Search'), more: () => import('./pages/More'), library: () => import('./pages/Library'), speakers: () => import('./pages/Speakers'), account: () => import('./pages/Account'),
 };
 type Loaded = { [K in keyof typeof load]?: Awaited<ReturnType<(typeof load)[K]>> };
 const got: Loaded = {};
@@ -26,8 +27,9 @@ const ready = async (p: Page) => {
 
 const tabs: { page: Page; label: string }[] = [
   { page: 'home', label: '此刻' },
-  { page: 'flow', label: '流转' },
+  { page: 'search', label: '搜索' },
   { page: 'library', label: '曲库' },
+  { page: 'flow', label: '流转' },
   { page: 'say', label: '怎么说' },
   { page: 'speakers', label: '音箱' },
   { page: 'account', label: '设置' },
@@ -142,6 +144,8 @@ function Inner() {
       <header className={`topbar ${scrolled ? 'solid' : ''}`}>
         <a className="brand" href="#/home" aria-label="TrackFerry" onClick={(e) => { e.preventDefault(); navigate({ page: 'home' }); }}><Brand /></a>
         {place.page !== 'welcome' && (
+          <>
+          {(['flow', 'say', 'speakers', 'account'] as Page[]).includes(place.page) && <button type="button" className="crumb glass" onClick={() => navigate({ page: 'more' })}><svg viewBox="0 0 10 16" width="10" height="16" aria-hidden="true"><path d="M8.5 1.5 2 8l6.5 6.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>更多</button>}
           <nav className="tabs" aria-label="主导航">
             {tabs.map((t) => (
               <a key={t.page} href={href(t)} aria-current={place.page === t.page ? 'page' : undefined} onClick={(e) => { e.preventDefault(); navigate({ page: t.page }); }}>
@@ -149,6 +153,7 @@ function Inner() {
               </a>
             ))}
           </nav>
+          </>
         )}
       </header>
       <main className="content">
@@ -159,6 +164,8 @@ function Inner() {
           />
         )}
         {place.page === 'home' && <Home devices={data.devices} navigate={navigate} onRelink={relink} />}
+        {place.page === 'search' && got.search && <got.search.Search devices={data.devices} navigate={navigate} />}
+        {place.page === 'more' && got.more && <got.more.More navigate={navigate} dot={needsAttention} />}
         {place.page === 'flow' && got.flow && <got.flow.FlowPage key={place.id ?? ''} id={place.id} devices={data.devices} />}
         {place.page === 'say' && got.say && <got.say.Say navigate={navigate} />}
         {place.page === 'library' && got.library && <got.library.Library place={place} devices={data.devices} navigate={navigate} />}
@@ -167,7 +174,8 @@ function Inner() {
           <got.account.Account key={String(scanOnAccount)} account={data.account} build={session.build} startScanning={scanOnAccount} onChanged={refresh} onLogout={logout} />
         )}
       </main>
-      {place.page !== 'account' && <footer className="colophon"><Signature /></footer>}
+      {place.page !== 'welcome' && <Dock page={place.page} devices={data.devices} navigate={navigate} dot={needsAttention} />}
+      {place.page !== 'account' && place.page !== 'search' && place.page !== 'more' && <footer className="colophon"><Signature /></footer>}
     </div>
   );
 }

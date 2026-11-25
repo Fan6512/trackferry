@@ -56,7 +56,7 @@ function verdict(r: Reading): { yes: boolean; text: string } {
     case 'artist': return { yes: true, text: `点歌：${r.artist}的歌，随机一首接一首` };
     case 'random': return { yes: true, text: '点歌：随机一首' };
     case 'version': return { yes: true, text: r.artist ? `接着上一首：换成${r.artist}唱的${r.verb ? `；没点过歌就放${r.artist}的任意一首` : ''}` : '接着上一首：换一位歌手唱的' };
-    case 'list': return { yes: true, text: r.control === 'favorites' ? '连着放飞牛音乐的收藏' : r.title ? `连着放飞牛音乐的歌单“${r.title}”` : '连着放飞牛音乐的歌单，有好几个时要说名字' };
+    case 'list': return { yes: true, text: r.control === 'favorites' ? '连着放飞牛音乐的收藏' : r.control === 'album' ? (r.title ? `连着放曲库里的专辑“${r.title}”` : '连着放这首歌所在的专辑') : r.title ? `连着放飞牛音乐的歌单“${r.title}”` : '连着放飞牛音乐的歌单，有好几个时要说名字' };
     case 'favorite': if (r.control?.startsWith('list_')) return { yes: true, text: `放歌时说：${r.control === 'list_add' ? '加入' : '移出'}飞牛音乐的歌单${r.title ? `“${r.title}”` : ''}` };
       return { yes: true, text: r.control === 'remove' ? '放歌时说：移出飞牛音乐的收藏' : '放歌时说：加入飞牛音乐的收藏' };
     case 'control': return { yes: false, text: `播放控制：${controlName[r.control ?? ''] ?? '交给小爱'}，小爱自己做` };

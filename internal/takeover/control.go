@@ -115,6 +115,7 @@ func (e *Engine) SetVolume(ctx context.Context, dev string, volume int) error {
 	if changed, err := e.st.ChangePendingVolume(ctx, dev, volume); err != nil || changed && e.held(dev) {
 		return err
 	}
+	e.touch(dev)
 	if err := e.sp.SetVolume(ctx, dev, volume); err != nil {
 		return err
 	}

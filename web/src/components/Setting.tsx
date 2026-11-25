@@ -1,14 +1,21 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 export type Light = 'ok' | 'warn' | 'bad' | 'off';
 
 /** One subject of the settings page: what it is, how it stands, what can be done. */
-export function Setting({ id, icon, title, says, light, state, actions, children }: {
+export function Setting({ id, icon, title, says, light, state, actions, force = false, children }: {
   id: string; icon: ReactNode; title: string; says?: string; light?: Light; state?: ReactNode; actions?: ReactNode; children?: ReactNode;
+  /** Something in it needs an answer now. */
+  force?: boolean;
 }) {
+  // A phone shows one line each; a tap opens it. What has gone wrong is open already.
+  const need = force || light === 'bad';
+  const [open, setOpen] = useState(need);
+  useEffect(() => { if (need) setOpen(true); }, [need]);
   return (
-    <section className="st" id={`set-${id}`}>
+    <section className={`st ${open ? 'open' : ''}`} id={`set-${id}`}>
       <header className="st-head">
+        <button type="button" className="st-toggle" aria-expanded={open} aria-label={title} onClick={() => setOpen(!open)}><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true"><path d="M1 1.5l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
         <span className="st-icon">{icon}</span>
         <div><h2>{title}{state && <em className={`st-state ${light ?? 'off'}`}>{state}</em>}</h2>{says && <p>{says}</p>}</div>
         {actions && <div className="st-actions">{actions}</div>}

@@ -30,7 +30,7 @@
 | `GET /api/devices` · `POST /api/devices/sync` · `PATCH /api/devices/{id}` | 音箱列表、同步、改模式、别名，或压住小爱的方式 `{"hush":"normal\|strong\|wait"}` |
 | `POST /api/devices/{id}/takeover-test` | 接管测试，会出声 |
 | `GET·POST /api/devices/{id}/control` | 播放状态与音量；控制：`{"action":"play\|pause\|stop\|next\|previous\|wake"}`、`{"action":"volume","volume":35}` 或 `{"action":"mode","mode":"loop\|shuffle\|one"}`，成功返回 204；没有歌可切返回 409 |
-| `POST /api/devices/{id}/play` `{"source":"favorites\|playlist\|artist\|album\|online","id":"","name":""}` | 把收藏、歌单、专辑、歌手或一首线上的歌送到音箱；`id` 为歌单、专辑或线上歌曲，`name` 为歌手 |
+| `POST /api/devices/{id}/play` `{"source":"favorites\|playlist\|artist\|album\|track\|online","id":"","name":"","next":false}` | 把收藏、歌单、专辑、歌手或一首线上的歌送到音箱；`id` 为歌单、专辑或线上歌曲，`name` 为歌手；`next` 排到下一首（曲库的歌或线上的歌） |
 | `GET·PUT /api/playing` `{"artist":true,"after":false,"hours":3}` | 连续播放的设置，`hours` 为 0 不限；没写的不变 |
 | `GET /api/takeover/runs?limit=` | 接管经过 |
 | `GET /api/observer` | 监听状态 |
@@ -45,7 +45,9 @@
 | `GET /api/library/favorites` · `/playlists` · `/playlists/{guid}` | 收藏、歌单、歌单里的歌 |
 | `GET /api/library/online?q=` | 搜在线源 |
 | `GET /api/library/tracks/{id}/lyrics` | 歌词 |
-| `GET /api/library/missing` · `/api/library/missing.csv` | 缺歌清单（`owned` 为已补上）；导出还缺的 |
+| `GET /api/library/missing` · `/api/library/missing.csv` | 缺歌清单，不含已补上和移除的；导出同一份 |
+| `POST /api/library/missing/dismiss` `{"title":"","artist":"","back":false}` | 从缺歌清单移除；`back` 为撤销 |
+| `POST /api/library/playlists/{guid}/tracks` | 把曲库的歌加入飞牛歌单 |
 | `GET /api/cache` · `PUT` `{"limit_mb": 1024}` · `DELETE` | 线上歌曲缓存的用量；上限，`0` 为关闭，`-1` 为不限；清空 |
 | `GET·PUT /api/library/tracks/{id}/favorite` | 收藏 |
 | `GET /api/cover/{id}` | 封面 |

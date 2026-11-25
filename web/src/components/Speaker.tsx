@@ -92,6 +92,7 @@ function Body({ mode, state }: { mode: Mode; state?: WatchStatus['state'] }) {
 }
 
 export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?: WatchStatus; onChange: (d: Device) => void }) {
+  const [open, setOpen] = useState(() => innerWidth > 760 || device.mode === 'off' || watch?.state === 'error');
   return (
     <li className={`speaker mode-${device.mode} ${device.in_account ? '' : 'speaker-gone'}`}>
       <Body mode={device.in_account ? device.mode : 'off'} state={watch?.state} />
@@ -104,12 +105,15 @@ export function SpeakerRow({ device, watch, onChange }: { device: Device; watch?
           <span>{deviceSubtitle(device)}</span>
         </p>
         {device.in_account && device.mode !== 'off' && <Buttons device={device} />}
-        <ModeSwitch device={device} onChange={onChange} />
-        {device.in_account && device.mode === 'takeover' && <HushPick device={device} onChange={onChange} />}
-        <p className="speaker-hint">
-          {device.in_account ? modeHint[device.mode] : '设置会保留，重新绑定后恢复。'}
-          {watch && device.mode !== 'off' && <small className={watch.state === 'error' ? 'bad' : ''}>{watchText[watch.state]}{watch.error ? `：${watch.error}` : watch.recorded > 0 ? `，启动后听到 ${watch.recorded} 次点歌` : ''}</small>}
-        </p>
+        <details className="spk-set" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+          <summary><span>{device.in_account ? modeLabel[device.mode] : '设置'}</span>{device.in_account && device.mode === 'takeover' && <small>压住小爱：{hushes.find((h) => h.value === device.hush)?.label}</small>}<svg viewBox="0 0 12 8" width="11" height="8" aria-hidden="true"><path d="M1 1.5l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></summary>
+          <ModeSwitch device={device} onChange={onChange} />
+          {device.in_account && device.mode === 'takeover' && <HushPick device={device} onChange={onChange} />}
+          <p className="speaker-hint">
+            {device.in_account ? modeHint[device.mode] : '设置会保留，重新绑定后恢复。'}
+            {watch && device.mode !== 'off' && <small className={watch.state === 'error' ? 'bad' : ''}>{watchText[watch.state]}{watch.error ? `：${watch.error}` : watch.recorded > 0 ? `，启动后听到 ${watch.recorded} 次点歌` : ''}</small>}
+          </p>
+        </details>
       </div>
     </li>
   );
@@ -136,6 +140,7 @@ export function Buttons({ device, name }: { device: Device; name?: string }) {
   const phase = flow?.player?.phase;
   const [meant, setMeant] = useState<'playing' | 'paused' | 'idle' | null>(null); // until the speaker is heard from
   const [now, setNow] = useState<Controls | null>(null);
+  const [lost, setLost] = useState<string | null>(null); // why the speaker cannot be read
   const [drag, setDrag] = useState<number | null>(null);
   const [busy, setBusy] = useState<Press | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +148,7 @@ export function Buttons({ device, name }: { device: Device; name?: string }) {
   const again = useRef<ReturnType<typeof setTimeout>>(undefined);
   const alive = useRef(true);
   const load = useCallback(async () => {
-    try { const s = await api.controls(id); if (alive.current) setNow(s); } catch { /* the buttons work without it */ }
+    try { const s = await api.controls(id); if (alive.current) { setNow(s); setLost(null); } } catch (e) { if (alive.current) setLost((e as ApiError).message); }
   }, [id]);
   useEffect(() => {
     alive.current = true;
@@ -194,6 +199,7 @@ export function Buttons({ device, name }: { device: Device; name?: string }) {
     <div className="ctls">
       <div className="ctl-row">
         {(name || list) && <span className="ctl-name">{name && <b>{name}</b>}{list && <span>{list}</span>}{list && now?.queue && <small className="num">{now.queue.at} / {now.queue.total}</small>}</span>}
+        {now?.queue?.next?.length ? <span className="ctl-name"><span>接着放《{now.queue.next[0] || '点的歌'}》{now.queue.next.length > 1 && `等 ${now.queue.next.length} 首`}</span></span> : null}
         <div className="ctl-play" role="group" aria-label="播放控制">
           {mode && <button type="button" className="ctl ctl-bare" onClick={() => press('mode', { mode: mode.next })} disabled={busy === 'mode'} title={mode.name} aria-label={`${deviceTitle(device)}播放方式：${mode.name}，点一下换成${playModes[mode.next].name}`}>{mode.icon}</button>}
           {button('previous', '上一首', alone)}
@@ -204,12 +210,13 @@ export function Buttons({ device, name }: { device: Device; name?: string }) {
         {device.can_wake && button('wake', '唤醒')}
         <label className="ctl-vol">
           {icons.volume}
-          <input type="range" min={0} max={100} value={volume ?? 0} disabled={volume === null} aria-label={`${deviceTitle(device)}音量`}
+          <input type="range" min={0} max={100} value={volume ?? 0} style={{ '--v': `${volume ?? 0}%` } as React.CSSProperties} disabled={volume === null} aria-label={`${deviceTitle(device)}音量`}
             onChange={(e) => setDrag(Number(e.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
           <small className="num">{volume ?? '–'}</small>
         </label>
       </div>
       {error && <p className="field-error" role="alert">{error}</p>}
+      {lost && !error && <p className="ctl-said" role="status">暂时读不到音箱，会自动重试：{lost}</p>}
       {said && <p className="ctl-said" role="status">{said}</p>}
     </div>
   );

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Water, type Picture } from './water';
 import { art, coverURL } from './art';
+import { bendGlass } from './bend';
 import fish from '../assets/brand/fish.webp';
 
 export const fishPicture: Picture = { src: fish, fallback: fish, cutout: true };
@@ -21,7 +22,8 @@ export function Stage({ children }: { children: ReactNode }) {
     w.show(fishPicture);
     w.place(null, innerHeight * 0.62);
     setWater(w);
-    return () => w.dispose();
+    const unbend = bendGlass();
+    return () => { w.dispose(); unbend(); };
   }, []);
   const value = useMemo(() => water, [water]);
   return (

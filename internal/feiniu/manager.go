@@ -28,6 +28,7 @@ type Status struct {
 	LinkedAt time.Time `json:"linked_at,omitzero"`
 	Expired  bool      `json:"expired"`
 	Error    string    `json:"error,omitempty"`
+	Code     bool      `json:"code"` // the NAS asks for an access code
 }
 
 // Manager holds the linked account. It is safe for concurrent use.
@@ -59,6 +60,7 @@ func NewManager(path string) (*Manager, error) {
 		return m, nil
 	}
 	m.ses, m.cl = &s, newClient(s.Base, s.Token, s.Cert)
+	m.cl.gate = newGate(s.Code)
 	return m, nil
 }
 
@@ -93,8 +95,9 @@ func Base(s string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// Login links an account. The password is used once and not kept.
-func (m *Manager) Login(ctx context.Context, base, user, password string) error {
+// Login links an account. The password is used once and not kept; the access code, where
+// 飞牛 asks for one, is.
+func (m *Manager) Login(ctx context.Context, base, user, password, code string) error {
 	base, err := Base(base)
 	if err != nil {
 		return err
@@ -103,22 +106,44 @@ func (m *Manager) Login(ctx context.Context, base, user, password string) error 
 	if user == "" || password == "" {
 		return errors.New("请填飞牛音乐的用户名和密码")
 	}
+	m.mu.RLock()
+	if code == "" && m.ses != nil && m.ses.Base == base {
+		code = m.ses.Code
+	}
+	m.mu.RUnlock()
 	probe := newClient(base, "", "")
 	probe.seen = new(string)
+	// The certificate is not known yet, so the code waits: whoever answers here could be anyone.
 	name, version, err := probe.system(ctx)
+	if errors.Is(err, ErrAuth) { // nobody has to sign in for this
+		err = ErrGate
+	}
+	if errors.Is(err, ErrGate) && strings.TrimSpace(code) != "" {
+		err = nil
+	}
 	if err != nil {
 		return err
 	}
 	pin := *probe.seen
 	// From here on only the certificate just seen is accepted.
 	c := newClient(base, "", pin)
+	c.gate = newGate(code)
+	if name == "" && version == "" {
+		if name, version, err = c.system(ctx); err != nil {
+			return err
+		}
+	}
 	b := make([]byte, 16)
 	crand.Read(b)
 	s := Session{Base: base, User: user, DeviceID: hex.EncodeToString(b), Cert: pin, LinkedAt: time.Now().UTC(), Server: name, Version: version}
+	if c.gate.n > 0 { // it did ask
+		s.Code = c.gate.code
+	}
 	if s.Token, err = c.login(ctx, user, password, s.DeviceID); err != nil {
 		return err
 	}
 	cl := newClient(base, s.Token, pin)
+	cl.gate = c.gate
 	if _, err := cl.songs(ctx, 1, 1); err != nil {
 		return err
 	}
@@ -164,7 +189,7 @@ func (m *Manager) Status() Status {
 		return Status{}
 	}
 	s := m.ses
-	return Status{Linked: true, Base: s.Base, User: s.User, Server: s.Server, Version: s.Version, LinkedAt: s.LinkedAt, Expired: m.expired, Error: m.lastErr}
+	return Status{Linked: true, Base: s.Base, User: s.User, Server: s.Server, Version: s.Version, LinkedAt: s.LinkedAt, Expired: m.expired, Error: m.lastErr, Code: s.Code != ""}
 }
 
 // Linked reports whether an account is linked (it may have expired).
@@ -205,7 +230,7 @@ func (m *Manager) note(c *client, err error) {
 		return
 	}
 	m.lastErr = err.Error()
-	if errors.Is(err, ErrAuth) || errors.Is(err, ErrCert) {
+	if errors.Is(err, ErrAuth) || errors.Is(err, ErrCert) || errors.Is(err, ErrGate) || errors.Is(err, ErrGateCode) {
 		m.expired = true
 	}
 }

@@ -71,6 +71,7 @@ type Options struct {
 // Server serves the HTTP API.
 type Server struct {
 	Options
+	missMu  sync.Mutex // the list of songs taken off
 	started time.Time
 	ready   atomic.Bool
 	limiter *auth.Limiter
@@ -194,6 +195,8 @@ func (s *Server) Handler() http.Handler {
 		authed("POST /api/library/scan", s.libraryScan)
 		authed("GET /api/library/missing", s.libraryMissing)
 		authed("GET /api/library/missing.csv", s.libraryMissingCSV)
+		authed("POST /api/library/missing/dismiss", s.libraryMissingDismiss)
+		authed("POST /api/library/playlists/{guid}/tracks", s.libraryPlaylistAdd)
 		authed("GET /api/library/shelf", s.libraryShelf)
 		authed("GET /api/library/albums/{id}", s.libraryAlbum)
 		authed("GET /api/library/artist", s.libraryArtist)

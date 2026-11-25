@@ -223,6 +223,69 @@ func (l *Library) AlbumTracks(id string) (Album, []store.TrackRow) {
 	return Album{}, out
 }
 
+// FindAlbums finds albums by name, the likeliest first; artist "" is anyone's.
+func (l *Library) FindAlbums(name, artist string) []Album {
+	want := names.Norm(name)
+	if want == "" {
+		return nil
+	}
+	type hit struct {
+		Album
+		rank int
+	}
+	var hits []hit
+	for _, a := range l.index().albums {
+		if artist != "" && !names.SameArtist(a.Artist, artist) {
+			continue
+		}
+		plain, _ := names.SplitTitle(a.Name)
+		n, p := names.Norm(a.Name), names.Norm(plain)
+		rank := -1
+		switch {
+		case n == want:
+			rank = 0
+		case p == want:
+			rank = 1
+		case strings.HasPrefix(n, want):
+			rank = 2
+		case strings.Contains(n, want) && len([]rune(want)) > 1:
+			rank = 3
+		case close1(p, want):
+			rank = 4
+		}
+		if rank >= 0 {
+			hits = append(hits, hit{a, rank})
+		}
+	}
+	// Of albums of one name the fullest: the others are singles or loose songs.
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].rank != hits[j].rank {
+			return hits[i].rank < hits[j].rank
+		}
+		return hits[i].Tracks > hits[j].Tracks
+	})
+	var out []Album
+	for _, h := range hits {
+		out = append(out, h.Album)
+	}
+	return out
+}
+
+// close1 reports names of three or more characters with one misheard.
+func close1(a, b string) bool {
+	x, y := []rune(a), []rune(b)
+	if len(x) != len(y) || len(x) < 3 {
+		return false
+	}
+	n := 0
+	for i := range x {
+		if x[i] != y[i] {
+			n++
+		}
+	}
+	return n == 1
+}
+
 // ArtistTracks lists an artist's songs, favourites and originals first.
 func (l *Library) ArtistTracks(name string, limit int) []store.TrackRow {
 	x := l.index()

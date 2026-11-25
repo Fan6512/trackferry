@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, type Command, type Device, type ObserverStatus, type Route, type TakeoverRun } from '../api';
 import { Cover } from '../components/Cover';
-import { Ears } from '../components/Ears';
+import { AddTo } from '../components/AddTo';
+import { SpeakerChip } from '../components/SpeakerChip';
 import { Fish } from '../components/Fish';
 import { Heart } from '../components/Heart';
 import { LyricSheet, Progress, useWords } from '../components/Lyrics';
@@ -77,12 +78,15 @@ function Crossing({ scene, trying }: { scene: Scene | null; trying: boolean }) {
   );
 }
 
+// What was last known shows at once while it is asked for again.
+let known: { obs: ObserverStatus; cmds: Command[]; runs: TakeoverRun[]; more: boolean } | null = null;
+
 export function Home({ devices, navigate, onRelink }: { devices: Device[]; navigate: (p: Place) => void; onRelink: () => void }) {
   const water = useWater();
-  const [obs, setObs] = useState<ObserverStatus | null>(null);
-  const [cmds, setCmds] = useState<Command[] | null>(null);
-  const [runs, setRuns] = useState<TakeoverRun[]>([]);
-  const [more, setMore] = useState(false);
+  const [obs, setObs] = useState<ObserverStatus | null>(known?.obs ?? null);
+  const [cmds, setCmds] = useState<Command[] | null>(known?.cmds ?? null);
+  const [runs, setRuns] = useState<TakeoverRun[]>(known?.runs ?? []);
+  const [more, setMore] = useState(known?.more ?? false);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [tried, setTried] = useState<Scene | null>(null);
@@ -104,6 +108,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
       setObs(o);
       setRuns(r.runs ?? []);
       setError(null);
+      known = { obs: o, cmds: c.commands, runs: r.runs ?? [], more: c.commands.length === PAGE };
       setCmds((cur) => {
         if (!cur || cur.length <= PAGE) {
           setMore(c.commands.length === PAGE);
@@ -172,7 +177,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
     addEventListener('scroll', onScroll, { passive: true });
     addEventListener('resize', onSize);
     return () => { removeEventListener('scroll', onScroll); removeEventListener('resize', onSize); };
-  }, [water, ready, native, wide, many]);
+  }, [water, ready, native, wide, many, !!words]);
 
   const touch = (e: React.PointerEvent) => { if (water && e.clientY > water.waterline) water.ripple(e.clientX, e.clientY); };
   const last = useRef(0);
@@ -238,6 +243,7 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
   }
   const t = scene ? title(scene) : '说一声就来';
   const r = scene?.route;
+  const flowOf: Place = { page: 'flow', id: scene?.command ? String(scene.command.id) : scene?.run ? `r${scene.run.id}` : undefined };
   const now = sounding(flows, scene?.run?.id);
   const speakers = connected(devices);
   const deck = speakers.find((d) => d.device_id === (ear || (now && scene?.deviceId))) ?? speakers.find((d) => onSpeaker(flows, d.device_id)) ?? speakers.find((d) => d.device_id === scene?.deviceId) ?? speakers[0];
@@ -247,31 +253,36 @@ export function Home({ devices, navigate, onRelink }: { devices: Device[]; navig
   return (
     <div className="home">
       <section className={`scene ${words ? 'player' : ''} ${wide ? 'player-wide' : ''} ${many ? 'with-spks' : ''}`} onPointerDown={touch} onPointerMove={trail}>
-        <Ears devices={devices} value={ear} onChange={setEar} />
         <div className="raft" ref={raft}>{native && <Fish water mood={trying ? 'searching' : 'idle'} />}</div>
         <div className="words" key={scene?.key ?? 'none'}>
+          <div className="title">
           <p className="said">{scene ? <>{scene.said ? `“${scene.said}”` : sentBy(scene.route)}<span>{where}</span></> : <>对音箱说“小爱同学，播放晴天”</>}</p>
           <h1 style={{ '--n': Math.max(3, [...t].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.55 : 1), 0)) } as React.CSSProperties}>{t}</h1>
           {!scene && <button className="link say-link" onClick={() => navigate({ page: 'say' })}>看看都能怎么说</button>}
           {r && !native && <p className="by">{[singer(r.artist), singer(r.album)].filter(Boolean).join('　')}</p>}
           {r && native && <p className="by">{r.reason || '由小爱处理'}</p>}
+          {r?.track_id && !native ? <div className="acts"><Heart key={`h${r.track_id}/${kept?.key}`} trackID={r.track_id} title={t} /><AddTo trackID={r.track_id} title={t} /></div> : null}
+          </div>
           {words && <LyricSheet words={words} now={now} big={wide} />}
           {(now || words) && <div className="transport">
             {now ? <Progress now={now} total={r?.duration_ms} /> : <span />}
             {words && <button type="button" className="expand" aria-pressed={wide} aria-label={wide ? '收起歌词' : '放大歌词'} onClick={() => setBig(!big)}><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d={wide ? 'M9 4v5H4M15 20v-5h5M4 4l5 5M20 20l-5-5' : 'M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6'} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></button>}
           </div>}
-          {deck && <Buttons key={deck.device_id} device={deck} name={many && !ear ? deviceTitle(deck) : undefined} />}
+          {deck && <Buttons key={deck.device_id} device={deck} />}
+          {connected(devices).length > 0 && <div className="deck-foot">
+            <SpeakerChip devices={devices} value={ear} onChange={setEar} all bare={deck ? deviceTitle(deck) : '全部音箱'} />
+            {scene && <button type="button" className="foot-flow" onClick={() => navigate(flowOf)} aria-label="看它怎么走" title="流转"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h7c3 0 3 10 6 10h3M4 17h5M16 7h4M17.5 4.5 20 7l-2.5 2.5M17.5 14.5 20 17l-2.5 2.5" /></svg></button>}
+          </div>}
         </div>
         <Crossing scene={scene} trying={trying} />
         <div className="below">
           <div className="verdict" key={scene?.key}>
             {o ? <span className={`tag tag-${now ? (now.phase === 'playing' ? 'ok' : 'warn') : o.tone}`}>{now ? phaseText[now.phase] : o.text}</span> : scene && !native && <span className="tag">{scene.command ? (r?.preview ? '只记录，没有出声' : '没有接管') : `${stopLabel[r!.source ?? 'library']}，${ms(r!.ms)} 找到`}</span>}
             {r && !native && r.duration_ms ? <span className="num">{length(r.duration_ms)}</span> : null}
-            {scene && r && <button className="link" onClick={() => navigate({ page: 'flow', id: scene.command ? String(scene.command.id) : scene.run ? `r${scene.run.id}` : undefined })}>看它怎么走</button>}
+            {scene && r && <button className="link" onClick={() => navigate(flowOf)}>看它怎么走</button>}
             {kept && scene && kept.deviceId === scene.deviceId && kept.at! > scene.at! && kept.key !== scene.key && !picked && !tried ? <span className="kept-note"><HeartMark />{kept.route?.reason}</span> : null}
             {r?.basis?.some((f) => f.name === '选它') && !tried ? <span className="muted more">{r.basis.find((f) => f.name === '选它')!.text}</span> : null}
             {r?.others?.length ? <span className="muted more">也有{r.others.join('、')}的版本</span> : null}
-            {r?.track_id && !native ? <Heart key={`h${r.track_id}/${kept?.key}`} trackID={r.track_id} title={t} /> : null}
             {r?.track_id && !native ? <Play key={r.track_id} send={(d) => api.playTrack(d, r.track_id!)} title={t} devices={devices} /> : null}
           </div>
           <div className="recent">

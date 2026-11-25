@@ -53,23 +53,6 @@ func (e *Engine) style(dev string) string {
 	return e.Style(dev)
 }
 
-// know remembers a speaker's volume, so that muting need not wait for an answer about it.
-func (e *Engine) know(dev string, v int) {
-	if v <= 0 {
-		return
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.volumes[dev] = v
-}
-
-// Prime asks a speaker for its volume ahead of the first request.
-func (e *Engine) Prime(ctx context.Context, dev string) {
-	if p, err := e.sp.PlayStatus(ctx, dev); err == nil && !e.held(dev) {
-		e.know(dev, p.Volume)
-	}
-}
-
 // muting is what became of an attempt to mute.
 type muting struct {
 	volume    int  // to come back to; -1: not known
@@ -96,9 +79,7 @@ func (e *Engine) mute(ctx context.Context, dev string) (m muting) {
 		m.err = e.sp.SetVolume(ctx, dev, 0)
 		return m
 	}
-	e.mu.Lock()
-	known := e.volumes[dev]
-	e.mu.Unlock()
+	known := e.volume(dev)
 	type answer struct {
 		p   xiaomi.PlayStatus
 		err error
@@ -116,9 +97,9 @@ func (e *Engine) mute(ctx context.Context, dev string) (m muting) {
 			m.status = describe(a.err) + "，不静音"
 			return m
 		}
-		m.volume = a.p.Volume
+		e.learn(dev, a.p.Volume)
+		m.volume = max(a.p.Volume, e.volume(dev))
 		m.statusOK, m.status = true, fmt.Sprintf("状态 %d，音量 %d", a.p.Status, a.p.Volume)
-		e.know(dev, a.p.Volume)
 	}
 	if m.volume <= 0 {
 		return m
@@ -135,13 +116,14 @@ func (e *Engine) mute(ctx context.Context, dev string) (m muting) {
 		e.st.ClearPendingVolume(bg, dev)
 	}
 	if known > 0 {
-		// The answer tells the volume only if it was given before the mute arrived.
+		// The answer tells the volume only if it was given before the mute arrived: what it
+		// says afterwards is the least the speaker goes down to, which need not be 0.
 		a := <-ask
 		if m.statusOK = a.err == nil; !m.statusOK {
 			m.status = fmt.Sprintf("%s，按上次的音量 %d", describe(a.err), known)
 			return m
 		}
-		if a.p.Volume > 0 && a.p.Volume != known {
+		if a.p.Volume > e.floor(dev) && a.p.Volume != known {
 			m.volume = a.p.Volume
 			e.know(dev, m.volume)
 			if m.muted {

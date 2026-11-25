@@ -11,10 +11,10 @@ export interface OnlineSong { key: string; source: 'kuwo' | 'kugou' | 'migu' | '
 export interface OnlineOutcome { source: string; state: string; detail?: string }
 export interface Playlist { guid: string; name: string }
 /** What can be sent to a speaker to play. */
-export type Sendable = { source: 'favorites' } | { source: 'playlist' | 'album' | 'online'; id: string } | { source: 'artist'; name: string };
+export type Sendable = { source: 'favorites' } | { source: 'playlist' | 'album' | 'online'; id: string; title?: string } | { source: 'track'; track_id: number; title?: string } | { source: 'artist'; name: string };
 export type Press = 'play' | 'pause' | 'stop' | 'next' | 'previous' | 'mode' | 'volume' | 'wake';
 export type PlayMode = 'loop' | 'shuffle' | 'one';
-export interface Controls { state: 'playing' | 'paused' | 'idle'; volume: number | null; mode: PlayMode | ''; queue: { list: string; at: number; total: number } | null }
+export interface Controls { state: 'playing' | 'paused' | 'idle'; volume: number | null; mode: PlayMode | ''; queue: { list: string; at: number; total: number; next: string[] } | null }
 
 export type Mode = 'off' | 'observe' | 'takeover';
 
@@ -177,9 +177,10 @@ export interface Album { id: string; name: string; artist: string; cover: string
 export interface Artist { name: string; cover: string; tracks: number }
 export interface Shelf { newest: Album[] | null; wall: Album[] | null; artists: Artist[] | null; favorites: Track[] | null; picks: Track[] | null; albums: number }
 
-export interface FeiniuServer { base: string; name: string; version: string }
+export interface FeiniuServer { base: string; name: string; version: string; gate: boolean }
 
 export interface Feiniu {
+  code: boolean;
   linked: boolean;
   base?: string;
   user?: string;
@@ -387,11 +388,13 @@ export const api = {
   favorite: (id: number, on: boolean) => request<{ favorite: boolean }>('PUT', `/api/library/tracks/${id}/favorite`, { on }),
   playTrack: (id: string, track_id: number) => request<TakeoverRun>('POST', `/api/devices/${encodeURIComponent(id)}/takeover-test`, { source: 'track', track_id }),
   feiniu: () => request<FeiniuInfo>('GET', '/api/feiniu'),
-  linkFeiniu: (base: string, user: string, password: string) => request<FeiniuInfo>('POST', '/api/feiniu', { base, user, password }),
+  linkFeiniu: (base: string, user: string, password: string, code: string) => request<FeiniuInfo>('POST', '/api/feiniu', { base, user, password, code }),
   discoverFeiniu: () => request<{ servers: FeiniuServer[]; blocked: string[]; relay: boolean }>('GET', '/api/feiniu/discover'),
   unlinkFeiniu: () => request<FeiniuInfo>('DELETE', '/api/feiniu'),
   searchLibrary: (q: string) => request<{ tracks: Track[] | null }>('GET', `/api/library/search?q=${encodeURIComponent(q)}`),
   missing: () => request<{ songs: Missing[] }>('GET', '/api/library/missing'),
+  dismissMissing: (title: string, artist: string, back = false) => request<{ songs: Missing[] }>('POST', '/api/library/missing/dismiss', { title, artist, back }),
+  addToPlaylist: (guid: string, track_id: number) => request<{ changed: boolean }>('POST', `/api/library/playlists/${encodeURIComponent(guid)}/tracks`, { track_id }),
   cache: () => request<CacheStatus>('GET', '/api/cache'),
   setCache: (limit_mb: number) => request<CacheStatus>('PUT', '/api/cache', { limit_mb }),
   clearCache: () => request<CacheStatus>('DELETE', '/api/cache'),
@@ -413,6 +416,7 @@ export const api = {
   homeToken: () => request<{ token: string }>('POST', '/api/home/token'),
   setHush: (id: string, hush: Hush) => request<Device>('PATCH', `/api/devices/${encodeURIComponent(id)}`, { hush }),
   play: (id: string, what: Sendable) => request<TakeoverRun>('POST', `/api/devices/${encodeURIComponent(id)}/play`, what),
+  playNext: (id: string, what: Sendable) => request<{ queued?: boolean }>('POST', `/api/devices/${encodeURIComponent(id)}/play`, { ...what, next: true }),
   playing: () => request<Playing>('GET', '/api/playing'),
   setPlaying: (p: Partial<Playing>) => request<Playing>('PUT', '/api/playing', p),
   favorites: (from = 0) => request<{ tracks: Track[] | null; total: number }>('GET', `/api/library/favorites?from=${from}`),

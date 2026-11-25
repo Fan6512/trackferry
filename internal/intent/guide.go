@@ -82,6 +82,9 @@ var yes = []Example{
 	{"随机播放我喜欢的歌", "同上", KindList},
 	{"播放测试歌单", "连着放飞牛音乐里叫“测试”的歌单", KindList},
 	{"我想听我的歌单测试", "同上", KindList},
+	{"播放范特西专辑", "连着放曲库里的这张专辑", KindList},
+	{"播放周杰伦的专辑范特西", "同上，说了歌手更准", KindList},
+	{"播放这张专辑", "放歌时说：接着放这首歌所在的专辑", KindList},
 	{"放点音乐", "从曲库里随机一首", KindRandom},
 	{"随便放一首歌", "从曲库里随机一首", KindRandom},
 }
@@ -113,6 +116,17 @@ func TheGuide() Guide {
 func Silences(query string) bool {
 	q := normalize(query)
 	for _, w := range []string{"停", "闭嘴", "安静", "别唱", "别放", "别播", "不要放", "不听了", "不想听", "关掉音乐", "关音乐", "关闭音乐", "关掉歌", "关机", "晚安", "退出"} {
+		if strings.Contains(q, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// Volume reports words about how loud it is.
+func Volume(query string) bool {
+	q := normalize(query)
+	for _, w := range []string{"音量", "声音", "大声", "小声", "大点声", "小点声", "静音", "太吵", "太响", "调大", "调小", "调高", "调低"} {
 		if strings.Contains(q, w) {
 			return true
 		}

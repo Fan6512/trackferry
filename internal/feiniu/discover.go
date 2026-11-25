@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -18,6 +19,7 @@ type Server struct {
 	Base    string `json:"base"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	Gate    bool   `json:"gate"` // asks for an access code
 	guid    string
 }
 
@@ -126,7 +128,9 @@ func probe(ctx context.Context, host string, limit time.Duration) (*Server, bool
 		Name    string `json:"serverName"`
 		Version string `json:"serverVersion"`
 	}
-	if err := c.call(ctx, http.MethodGet, "/sys/config", nil, nil, &out); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/sys/config", nil, nil, &out); errors.Is(err, ErrGate) {
+		return &Server{Base: base, Gate: true}, false
+	} else if err != nil {
 		return nil, ctx.Err() != nil
 	}
 	if out.GUID == "" && out.Version == "" {

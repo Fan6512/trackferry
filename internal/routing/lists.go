@@ -172,6 +172,68 @@ func (r *Router) list(ctx context.Context, rt *Route, in intent.Intent) {
 	rt.Reason = name + "里的歌暂时读不到"
 }
 
+// album plays an album of the library; without a title the one that song is from.
+func (r *Router) album(rt *Route, in intent.Intent, song int64) {
+	start := time.Now()
+	l := Layer{Name: "library", State: online.StateMiss, Candidates: []Candidate{}}
+	defer func() { l.MS = time.Since(start).Milliseconds(); rt.Layers = append(rt.Layers, l) }()
+	var a library.Album
+	if in.Title == "" {
+		t, ok := r.Library.Track(song)
+		switch {
+		case !ok:
+			rt.Reason = "不知道说的是哪张专辑"
+			return
+		case t.AlbumID == "":
+			rt.Reason = "《" + t.Title + "》没有专辑信息"
+			return
+		}
+		a.ID = t.AlbumID
+	} else {
+		as := r.Library.FindAlbums(in.Title, in.Artist)
+		if len(as) == 0 {
+			rt.Reason = "曲库里没有专辑“" + strings.TrimSpace(in.Artist+" "+in.Title) + "”"
+			return
+		}
+		a = as[0]
+	}
+	a, ts := r.Library.AlbumTracks(a.ID)
+	var ids []int64
+	first := -1
+	var m library.Match
+	for _, t := range ts {
+		if first < 0 {
+			var ok bool
+			if m, ok = r.Track(t.ID); ok {
+				first = len(ids)
+			}
+		}
+		ids = append(ids, t.ID)
+	}
+	if first < 0 {
+		l.State, l.Detail, rt.Reason = online.StateError, "文件暂时读不到", "专辑“"+a.Name+"”里的歌暂时读不到"
+		return
+	}
+	rt.take(m)
+	rt.List, rt.order = "专辑“"+a.Name+"”", ids
+	rt.queue = append(append([]int64{}, ids[first:]...), ids[:first]...)
+	l.State, l.Detail = online.StateHit, fmt.Sprintf("%s，%d 首连着放", rt.List, len(ids))
+	l.Candidates = show([]library.Match{m})
+	rt.Because("选它", "%s", l.Detail)
+}
+
+// PutIn adds a song of the library to a playlist picked by hand.
+func (r *Router) PutIn(ctx context.Context, id int64, guid string) (changed bool, err error) {
+	if r.Lists == nil || !r.Lists.Linked() {
+		return false, errors.New("没有连接飞牛音乐")
+	}
+	t, ok := r.Library.Track(id)
+	if !ok || t.GUID == "" {
+		return false, library.ErrNotRemote
+	}
+	return r.Lists.PutInPlaylist(ctx, guid, t.GUID, true)
+}
+
 // Track is a song of the library, if its file can be read right now.
 func (r *Router) Track(id int64) (library.Match, bool) {
 	t, ok := r.Library.Track(id)

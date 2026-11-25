@@ -260,6 +260,14 @@ func serve() error {
 		}
 		return takeover.HushStyle(d.Hush, d.Hardware, d.MiotDID)
 	}
+	engine.Floor = func(id string) int {
+		if d, err := st.Device(ctx, id); err == nil {
+			if n, ok := xiaomi.VolumeFloor(d.Hardware); ok {
+				return n
+			}
+		}
+		return takeover.DefaultFloor
+	}
 	engine.Deep = func(c context.Context, id string, on bool) error {
 		d, err := st.Device(ctx, id)
 		if err != nil || !xiaomi.CanHush(d.Hardware, d.MiotDID) {
@@ -274,12 +282,20 @@ func serve() error {
 			if !d.InAccount || d.Mode != store.ModeTakeover {
 				continue
 			}
-			engine.Prime(ctx, d.DeviceID)
 			if engine.Style(d.DeviceID) != takeover.HushNormal {
 				xm.WarmHome(ctx)
 			}
 		}
 	}()
+	go engine.Refresh(ctx, func() (out []string) {
+		devs, _ := st.Devices(ctx)
+		for _, d := range devs {
+			if d.InAccount && d.Mode == store.ModeTakeover {
+				out = append(out, d.DeviceID)
+			}
+		}
+		return out
+	})
 	go engine.RecoverVolumes(ctx) // a crash mid-takeover must not leave a speaker muted
 	lib := library.New(cfg.MusicDir, st, log)
 	fn, err := feiniu.NewManager(filepath.Join(private, "feiniu.json"))
@@ -366,6 +382,9 @@ func serve() error {
 	obs.OnOther = func(id string, r xiaomi.Record) {
 		if slices.Contains(r.AnswerTypes, "AUDIO") {
 			dispatcher.Forget(id)
+		}
+		if intent.Volume(r.Query) {
+			go engine.Turned(ctx, id)
 		}
 		engine.Hear(id, takeover.Heard{Stop: intent.Silences(r.Query), Audio: slices.Contains(r.AnswerTypes, "AUDIO"), Answer: utf8.RuneCountInString(r.Answer)})
 	}

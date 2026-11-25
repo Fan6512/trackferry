@@ -105,6 +105,7 @@ func (s *Server) controlState(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.Xiaomi.PlayStatus(r.Context(), d.DeviceID)
 	if err != nil {
+		s.Log.Warn("音箱　读不到状态", "音箱", firstNonEmpty(d.Alias, d.Name), "原因", takeover.Describe(err))
 		writeError(w, http.StatusBadGateway, "no_status", takeover.Describe(err))
 		return
 	}

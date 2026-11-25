@@ -52,14 +52,15 @@ func (s *Server) feiniuLogin(w http.ResponseWriter, r *http.Request) {
 		Base     string `json:"base"`
 		User     string `json:"user"`
 		Password string `json:"password"`
+		Code     string `json:"code"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	err := s.Feiniu.Login(ctx, in.Base, in.User, in.Password)
-	in.Password = ""
+	err := s.Feiniu.Login(ctx, in.Base, in.User, in.Password, in.Code)
+	in.Password, in.Code = "", ""
 	var ae *feiniu.APIError
 	switch {
 	case err == nil:
@@ -70,6 +71,13 @@ func (s *Server) feiniuLogin(w http.ResponseWriter, r *http.Request) {
 			msg = "这个飞牛音乐用户被停用了"
 		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "feiniu_refused", "message": msg, "detail": err.Error()})
+		return
+	case errors.Is(err, feiniu.ErrGate):
+		writeError(w, http.StatusBadGateway, "feiniu_gate", "这台飞牛要先过访问码。填上访问码再连；没有开访问码的话，看看地址是不是飞牛的")
+		return
+	case errors.Is(err, feiniu.ErrGateCode):
+		s.fnLimiter.Fail(key, time.Now())
+		writeError(w, http.StatusBadGateway, "feiniu_gate", "飞牛没有接受这个访问码")
 		return
 	default:
 		writeError(w, http.StatusBadGateway, "feiniu_unreachable", err.Error())

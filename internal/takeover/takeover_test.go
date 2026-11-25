@@ -24,12 +24,14 @@ import (
 type fakeSpeaker struct {
 	mu       sync.Mutex
 	volume   int
+	least    int    // what 0 leads to
 	playing  string // audio id currently playing, "" = idle
 	calls    []string
 	volumes  []int
 	fetch    chan struct{} // closed on the first PlayURL (the speaker pulls the stream)
-	fetchOK  bool          // whether PlayURL leads to a fetch
-	hijacks  int           // how many times Xiao AI's playlist takes over right after a push
+	late     bool
+	fetchOK  bool // whether PlayURL leads to a fetch
+	hijacks  int  // how many times Xiao AI's playlist takes over right after a push
 	playErr  error
 	speakErr error
 	statusOK bool
@@ -47,6 +49,11 @@ func (f *fakeSpeaker) PlayStatus(context.Context, string) (xiaomi.PlayStatus, er
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("status")
+	if f.late { // the answer overtaken by the mute
+		f.mu.Unlock()
+		time.Sleep(30 * time.Millisecond)
+		f.mu.Lock()
+	}
 	if !f.statusOK {
 		return xiaomi.PlayStatus{}, errors.New("status unavailable")
 	}
@@ -71,7 +78,7 @@ func (f *fakeSpeaker) SetVolume(_ context.Context, _ string, v int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.log("volume")
-	f.volume = v
+	f.volume = max(v, f.least)
 	f.volumes = append(f.volumes, v)
 	if f.volHook != nil {
 		return f.volHook(v)

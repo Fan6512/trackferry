@@ -39,6 +39,12 @@ func Heard(query string, in intent.Intent) string {
 		parts = append(parts, "换一位歌手唱")
 	case intent.KindList:
 		what := "飞牛音乐的收藏"
+		if in.Control == intent.ListAlbum {
+			what = "这首歌所在的专辑"
+			if in.Title != "" {
+				what = "专辑“" + strings.TrimSpace(in.Artist+" "+in.Title) + "”"
+			}
+		}
 		if in.Control == intent.ListPlaylist {
 			what = "飞牛音乐的歌单"
 			if in.Title != "" {

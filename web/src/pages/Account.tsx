@@ -87,7 +87,7 @@ export function Account({ account, build, startScanning, onChanged, onLogout }: 
 
       <FeiniuCard onLight={feiniuLight} />
 
-      <Setting id="xiaomi" icon={<SourceIcon name="xiaomi" />} title="小米账号" light={mine} state={account.linked ? (account.relink_required ? '登录已失效' : '已关联') : '未关联'}
+      <Setting id="xiaomi" force={scanning} icon={<SourceIcon name="xiaomi" />} title="小米账号" light={mine} state={account.linked ? (account.relink_required ? '登录已失效' : '已关联') : '未关联'}
         says={account.last_sync && account.linked ? explainSync(account.last_sync).title : '用来读取音箱听到的话和控制播放'}
         actions={scanning ? undefined : <><button className={`btn ${account.linked && !account.relink_required ? '' : 'btn-primary'}`} onClick={() => setScanning(true)}>{account.linked ? '重新登录' : '关联小米账号'}</button>{account.linked && !confirmUnlink && <button className="btn btn-quiet" onClick={() => setConfirmUnlink(true)}>解除关联</button>}</>}>
           {account.linked && <dl className="kv">

@@ -110,10 +110,10 @@ func TestLinkUseAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ae *APIError
-	if err := m.Login(ctx, s.URL, "me", "wrong"); !errors.As(err, &ae) || m.Linked() {
+	if err := m.Login(ctx, s.URL, "me", "wrong", ""); !errors.As(err, &ae) || m.Linked() {
 		t.Fatalf("wrong password: %v", err)
 	}
-	if err := m.Login(ctx, s.URL, "me", "pw"); err != nil {
+	if err := m.Login(ctx, s.URL, "me", "pw", ""); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(file)

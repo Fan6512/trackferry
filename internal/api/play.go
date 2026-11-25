@@ -48,12 +48,64 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 		Source string `json:"source"` // favorites | playlist | artist | album | online
 		ID     string `json:"id"`     // the playlist, album or online song
 		Name   string `json:"name"`   // the artist
+		Track  int64  `json:"track_id"`
+		Title  string `json:"title"`
+		Next   bool   `json:"next"` // after the song that is on
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	d, ok := s.target(w, r)
 	if !ok {
+		return
+	}
+	if req.Next {
+		w0 := takeover.Wish{Title: req.Title}
+		switch req.Source {
+		case "track":
+			rt, ok := s.Router.Next(req.Track, "")
+			if !ok {
+				writeError(w, http.StatusNotFound, "no_audio", "这首歌暂时读不到")
+				return
+			}
+			w0.Title = rt.Title
+			w0.Route = func(context.Context) (*routing.Route, error) {
+				rt, ok := s.Router.Next(req.Track, "")
+				if !ok {
+					return nil, errors.New("暂时读不到")
+				}
+				return rt, nil
+			}
+		case "online":
+			w0.Route = func(ctx context.Context) (*routing.Route, error) {
+				f, err := s.Router.Online.Take(ctx, req.ID)
+				if err != nil {
+					return nil, err
+				}
+				return routing.FromOnline(f), nil
+			}
+		default:
+			writeError(w, http.StatusBadRequest, "bad_source", "只有单首歌可以排到下一首")
+			return
+		}
+		if len(w0.Title) > 300 {
+			w0.Title = ""
+		}
+		queued, err := s.Dispatcher.Want(d.DeviceID, w0)
+		if err != nil {
+			writeError(w, http.StatusConflict, "full", err.Error())
+			return
+		}
+		if queued {
+			writeJSON(w, http.StatusOK, map[string]bool{"queued": true})
+			return
+		}
+		rt, err := w0.Route(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "no_audio", "这首放不了："+err.Error())
+			return
+		}
+		s.answerRun(w, d)(s.Dispatcher.Push(r.Context(), d, rt))
 		return
 	}
 	var list string
@@ -177,6 +229,24 @@ func (s *Server) libraryPlaylists(w http.ResponseWriter, r *http.Request) {
 		out = append(out, all...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"playlists": out})
+}
+
+// libraryPlaylistAdd puts a song into a playlist of 飞牛音乐.
+func (s *Server) libraryPlaylistAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TrackID int64 `json:"track_id"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	changed, err := s.Router.PutIn(ctx, req.TrackID, r.PathValue("guid"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "feiniu", "没能加入歌单："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed})
 }
 
 func (s *Server) libraryPlaylist(w http.ResponseWriter, r *http.Request) {
