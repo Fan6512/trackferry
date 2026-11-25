@@ -1,0 +1,11 @@
+#!/bin/sh
+case "$#:$1" in
+    1:start|1:stop|1:restart|1:status|1:enable|1:disable|1:enabled)
+        exec /etc/init.d/trackferry "$1";;
+    1:mem)
+        for k in memory.current memory.peak memory.high memory.max memory.swap.max memory.events; do
+            printf '%s\n' "$k"; cat "/sys/fs/cgroup/trackferry/$k" || exit 1
+        done;;
+    1:log) logread -e trackferry | tail -50;;
+    *) echo 'tf start|stop|restart|status|enable|disable|enabled|mem|log'; exit 1;;
+esac
