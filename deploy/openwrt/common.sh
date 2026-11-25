@@ -12,7 +12,7 @@ tf_mount_path() {
 }
 tf_ip() {
     printf '%s\n' "$1" | awk -F. '
-      NF!=4 {exit 1}
+      NR!=1 || NF!=4 {good=0; exit 1}
       {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1
       if($1==0 || $1==127 || $1>=224 || ($1==169 && $2==254)) exit 1
       good=1} END {if(!good) exit 1}'
@@ -43,7 +43,7 @@ tf_load() {
 }
 tf_mounted() {
     tf_trusted /mnt && tf_trusted "$TF_MOUNT" &&
-    [ "$(tf_device "$TF_MOUNT" /proc/mounts)" = "$TF_DEVICE" ]
+    device=$(tf_device "$TF_MOUNT" /proc/mounts) && [ -n "$device" ] && [ "$device" = "$TF_DEVICE" ]
 }
 tf_preflight() {
     tf_load && tf_mounted && tf_local_ip "$TF_IP" && tf_identity || return 1
@@ -62,8 +62,11 @@ tf_empty() {
         members=$(cat "$TF_CG/cgroup.procs") && [ -z "$members" ]
     }
 }
+tf_cgroup2() {
+    awk '$2=="/sys/fs/cgroup" && $3=="cgroup2" {ok=1} END {exit !ok}' "$1"
+}
 tf_guard() {
-    [ "$(stat -f -c %T /sys/fs/cgroup)" = cgroup2fs ] || return 1
+    tf_cgroup2 /proc/mounts || return 1
     grep -qw memory /sys/fs/cgroup/cgroup.controllers || return 1
     tf_empty || return 1
     if ! grep -qw memory /sys/fs/cgroup/cgroup.subtree_control; then

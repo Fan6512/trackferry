@@ -12,7 +12,7 @@ for cmd in openssl sha256sum ip stat ubus awk; do command -v "$cmd" >/dev/null |
 tf_mount_path "$mountpoint" && tf_trusted /mnt && tf_trusted "$mountpoint" && tf_local_ip "$lan" && tf_identity || { tf_error 'Invalid mount, LAN IP or service account'; exit 1; }
 device=$(tf_device "$mountpoint" /proc/mounts) || exit 1
 [ -n "$device" ] || exit 1
-[ "$(stat -f -c %T /sys/fs/cgroup)" = cgroup2fs ] && grep -qw memory /sys/fs/cgroup/cgroup.controllers && tf_empty || exit 1
+tf_cgroup2 /proc/mounts && grep -qw memory /sys/fs/cgroup/cgroup.controllers && tf_empty || exit 1
 app="$mountpoint/trackferry"
 for p in "$app" "$TF_INIT" "$TF_SETTINGS" "$TF_LIB" /usr/bin/tf; do
     [ ! -e "$p" ] && [ ! -L "$p" ] || { tf_error "Existing path: $p (not modified)"; exit 1; }

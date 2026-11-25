@@ -19,4 +19,8 @@ printf '/dev/sda2 /mnt/usb ext4 rw 0 0\n/dev/sda1 /mnt/other ext4 rw 0 0\n' > "$
 if tf_device /mnt/missing "$tmp"; then exit 1; fi
 printf '/dev/sdb1 /mnt/usb ext4 rw 0 0\n' >> "$tmp"
 if tf_device /mnt/usb "$tmp"; then exit 1; fi
-echo 'Static shell and mount/IP input checks passed.'
+printf 'cgroup2 /sys/fs/cgroup cgroup2 rw 0 0\n' > "$tmp"
+tf_cgroup2 "$tmp"
+printf 'cgroup /sys/fs/cgroup cgroup rw 0 0\n' > "$tmp"
+if tf_cgroup2 "$tmp"; then exit 1; fi
+echo 'Static shell and mount/IP/cgroup input checks passed.'
