@@ -4,6 +4,10 @@ TF_SETTINGS=/etc/trackferry-openwrt.conf
 TF_CG=/sys/fs/cgroup/trackferry
 TF_INIT=/etc/init.d/trackferry
 TF_LIB=/usr/libexec/trackferry-openwrt
+TF_PENDING=/var/run/trackferry.boot-pending
+TF_MOUNT_HOOK=/etc/hotplug.d/mount/95-trackferry
+TF_IFACE_HOOK=/etc/hotplug.d/iface/95-trackferry
+TF_MANAGE_LOCK=/var/lock/trackferry-openwrt-install.lock
 tf_error() { printf '%s\n' "TrackFerry: $*" >&2; return 1; }
 tf_mount_path() {
     case "$1" in /mnt/*) ;; *) return 1;; esac
@@ -55,8 +59,7 @@ tf_preflight() {
     [ -f "$TF_APP/config.yaml" ] &&
     [ -d "$TF_APP/data" ] && [ ! -L "$TF_APP/data" ] &&
     [ "$(stat -c %u:%g:%a "$TF_APP/data")" = 10001:10001:700 ] &&
-    [ -d "$TF_APP/music" ] &&
-    [ ! -e "$TF_APP/data/update/installed.json" ] && [ ! -L "$TF_APP/data/update/installed.json" ]
+    [ -d "$TF_APP/music" ]
 }
 tf_empty() {
     [ ! -d "$TF_CG" ] || {
@@ -85,14 +88,29 @@ tf_guard_values() {
     [ "$(cat "$TF_CG/memory.swap.max")" = 0 ]
 }
 
-# Do not treat a root launcher or an unrelated cgroup member as a running server.
+# A signed upstream update execs in-place under data/update. This is a status
+# check, not a signature verifier: upstream Launch verifies its own signed record.
+tf_exe_path() {
+    case "$1" in
+        "$TF_APP/trackferry-linux-arm64") return 0;;
+        "$TF_APP/data/update/trackferry-"*)
+            v=${1#"$TF_APP/data/update/trackferry-"}
+            printf '%s\n' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$';;
+        *) return 1;;
+    esac
+}
 tf_process() {
     tf_load || return 1
     members=$(cat "$TF_CG/cgroup.procs" 2>/dev/null) || return 1
-    case "$members" in ''|*[!0-9]*) return 1;; esac
-    [ "$(readlink "/proc/$members/exe" 2>/dev/null)" = "$TF_APP/trackferry-linux-arm64" ] &&
-    awk '$1=="Uid:" {ok=($2==10001 && $3==10001 && $4==10001 && $5==10001)} END {exit !ok}' "/proc/$members/status" 2>/dev/null &&
-    grep -qx '0::/trackferry' "/proc/$members/cgroup" 2>/dev/null
+    # The updater may briefly run a second version-probe child in the same cgroup.
+    # Use the procd main PID, rather than guessing from all cgroup members.
+    pid=$(ubus call service list '{"name":"trackferry"}' | jsonfilter -e '@.trackferry.instances.main.pid') || return 1
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    printf '%s\n' "$members" | grep -qx "$pid" &&
+    tf_exe_path "$(readlink "/proc/$pid/exe" 2>/dev/null)" &&
+    awk '$1=="Uid:" {u=($2==10001 && $3==10001 && $4==10001 && $5==10001)}
+         $1=="Gid:" {g=($2==10001 && $3==10001 && $4==10001 && $5==10001)} END {exit !(u && g)}' "/proc/$pid/status" 2>/dev/null &&
+    grep -qx '0::/trackferry' "/proc/$pid/cgroup" 2>/dev/null
 }
 tf_wait_empty() {
     i=0

@@ -6,6 +6,7 @@ start_service() {
     # rc.common closes the service even when start_service returns failure.
     # Always submit the same instance definition: an empty set can stop an existing instance.
     # The actual child performs all safety checks before exec.
+    rm -f /var/run/trackferry.boot-pending
     procd_open_instance main
     procd_set_param command /usr/libexec/trackferry-openwrt/run.sh
     procd_set_param nice 10
@@ -18,4 +19,29 @@ start_service() {
 service_running() {
     . /usr/libexec/trackferry-openwrt/common.sh
     tf_process && procd_running trackferry main
+}
+
+# The pending flag exists only during this boot, until the first launch attempt.
+# OpenWrt's procd lock serializes boot_ready/start/stop across hotplug events.
+extra_command "boot_ready" "Try deferred boot start"
+boot() {
+    . /usr/libexec/trackferry-openwrt/common.sh
+    procd_lock
+    enabled || return 0
+    : > "$TF_PENDING"
+    boot_ready
+}
+boot_ready() {
+    . /usr/libexec/trackferry-openwrt/common.sh
+    procd_lock
+    [ -f "$TF_PENDING" ] || return 0
+    if ! enabled; then rm -f "$TF_PENDING"; return 0; fi
+    if ! tf_load; then rm -f "$TF_PENDING"; logger -t trackferry 'Invalid boot settings'; return 1; fi
+    # Only missing storage/address causes deferral; other failures are not retried.
+    tf_mounted && tf_local_ip "$TF_IP" || return 0
+    rm -f "$TF_PENDING"
+    start
+}
+stop_service() {
+    rm -f /var/run/trackferry.boot-pending
 }

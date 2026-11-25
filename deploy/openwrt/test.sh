@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-for f in common.sh run.sh trackferry.init tf verify.sh install.sh uninstall.sh test.sh; do sh -n "$f"; done
+for f in common.sh run.sh trackferry.init tf verify.sh install.sh uninstall.sh test.sh hotplug.sh; do sh -n "$f"; done
 . ./common.sh
 tf_mount_path /mnt/usb-1
 for p in / /mnt /mnt/../etc /mnt/a/b /mnt/.. '/mnt/a b'; do
@@ -96,3 +96,12 @@ fi
   rmdir "$TF_CG"
 )
 echo 'Static shell, mount, IP, device, cgroup, identity-file and settings checks passed.'
+
+# Only the pinned executable and upstream's exact versioned update path count.
+( TF_APP=/mnt/usb/trackferry
+  tf_exe_path "$TF_APP/trackferry-linux-arm64"
+  tf_exe_path "$TF_APP/data/update/trackferry-1.6.0"
+  for p in "$TF_APP/data/update/download" "$TF_APP/data/update/trackferry-1.6.0/evil" "$TF_APP/data/update/trackferry-1.6.0 (deleted)" /tmp/trackferry-1.6.0; do
+      if tf_exe_path "$p"; then echo "Accepted wrong executable: $p" >&2; exit 1; fi
+  done
+)
