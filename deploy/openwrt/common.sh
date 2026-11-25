@@ -70,6 +70,7 @@ tf_cgroup2() {
     awk '$2=="/sys/fs/cgroup" && $3=="cgroup2" {ok=1} END {exit !ok}' "$1"
 }
 tf_guard() {
+    [ "${TF_MEMORY_STATE:-}" = ok ] || return 1
     tf_cgroup2 /proc/mounts || return 1
     grep -qw memory /sys/fs/cgroup/cgroup.controllers || return 1
     tf_empty || return 1
@@ -77,14 +78,15 @@ tf_guard() {
         echo +memory > /sys/fs/cgroup/cgroup.subtree_control || return 1
     fi
     mkdir -p "$TF_CG" || return 1
-    echo 50331648 > "$TF_CG/memory.high" &&
-    echo 67108864 > "$TF_CG/memory.max" &&
+    echo "$((TF_HIGH_MIB * 1048576))" > "$TF_CG/memory.high" &&
+    echo "$((TF_MAX_MIB * 1048576))" > "$TF_CG/memory.max" &&
     echo 0 > "$TF_CG/memory.swap.max" &&
     tf_guard_values
 }
 tf_guard_values() {
-    [ "$(cat "$TF_CG/memory.high")" = 50331648 ] &&
-    [ "$(cat "$TF_CG/memory.max")" = 67108864 ] &&
+    [ "${TF_MEMORY_STATE:-}" = ok ] &&
+    [ "$(cat "$TF_CG/memory.high")" = "$((TF_HIGH_MIB * 1048576))" ] &&
+    [ "$(cat "$TF_CG/memory.max")" = "$((TF_MAX_MIB * 1048576))" ] &&
     [ "$(cat "$TF_CG/memory.swap.max")" = 0 ]
 }
 

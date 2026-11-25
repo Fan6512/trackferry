@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-for f in common.sh run.sh trackferry.init tf verify.sh install.sh uninstall.sh test.sh hotplug.sh; do sh -n "$f"; done
+for f in common.sh run.sh trackferry.init tf verify.sh install.sh uninstall.sh test.sh hotplug.sh memory.sh test-memory.sh; do sh -n "$f"; done
 . ./common.sh
 tf_mount_path /mnt/usb-1
 for p in / /mnt /mnt/../etc /mnt/a/b /mnt/.. '/mnt/a b'; do
@@ -105,3 +105,5 @@ echo 'Static shell, mount, IP, device, cgroup, identity-file and settings checks
       if tf_exe_path "$p"; then echo "Accepted wrong executable: $p" >&2; exit 1; fi
   done
 )
+
+sh ./test-memory.sh

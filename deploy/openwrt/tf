@@ -17,6 +17,11 @@ case "$#:$1" in
     1:stop|1:status|1:enable|1:disable|1:enabled)
         exec /etc/init.d/trackferry "$1";;
     1:mem)
+        . /usr/libexec/trackferry-openwrt/memory.sh
+        tf_memory_load /proc/meminfo || { echo "Invalid memory statistics" >&2; exit 1; }
+        tf_memory_report
+        echo "Current cgroup (bytes, not the next-start budget):"
+        [ -d /sys/fs/cgroup/trackferry ] || exit 0
         for k in memory.current memory.peak memory.high memory.max memory.swap.max memory.events; do
             printf '%s\n' "$k"; cat "/sys/fs/cgroup/trackferry/$k" || exit 1
         done;;

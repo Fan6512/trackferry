@@ -22,6 +22,6 @@ while ! tf_empty; do
 done
 "$TF_INIT" disable
 rm -f "$TF_MOUNT_HOOK" "$TF_IFACE_HOOK" "$TF_PENDING"
-rm -f "$TF_INIT" /usr/bin/tf "$TF_SETTINGS" "$TF_LIB/run.sh" "$TF_LIB/common.sh" "$TF_LIB/tf.installed" "$TF_LIB/init.installed" "$TF_LIB/hotplug.installed"
+rm -f "$TF_INIT" /usr/bin/tf "$TF_SETTINGS" "$TF_LIB/run.sh" "$TF_LIB/common.sh" "$TF_LIB/memory.sh" "$TF_LIB/tf.installed" "$TF_LIB/init.installed" "$TF_LIB/hotplug.installed"
 rmdir "$TF_LIB" 2>/dev/null || echo "TrackFerry: $TF_LIB not empty; remove it before reinstalling" >&2
 echo "Management removed; preserved $TF_APP, account and cgroup."
