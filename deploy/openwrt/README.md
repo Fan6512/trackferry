@@ -25,7 +25,7 @@ tf mem
 `sh uninstall.sh` 仅停止/禁用并移除管理层；保留程序、数据、配置、账号、cgroup。此后重新安装会拒绝现存目录，需后续显式迁移/恢复流程。不会卸载实验版 LuCI。
 
 ## 接管音箱
-`takeover_speakers` 默认为 `[]`，管理页不会列出可选音箱。先在 `<MOUNT>/trackferry/config.yaml`（root 拥有，644）写入音箱名，再在管理页逐个接管。
+`takeover_speakers` 默认为 `[]`，任何音箱都不能接管，管理页会提示先写名字。先在 `<MOUNT>/trackferry/config.yaml`（root 拥有，644）写入音箱名，再回管理页逐个接管。
 
 ## 内置更新（残留风险）
 上游 Linux 构建总会注入更新安装器，`POST /api/update` 与 `/api/update/install` 不读 `update_check`，已登录的管理员仍可从管理页触发。安装后 `<MOUNT>/trackferry/data/update/installed.json` 存在时，`tf start` 会被门禁拒绝（init 日志会点名该文件）；删除它即回到固定 v1.5.0。彻底禁用需上游加开关，另立 PR。
