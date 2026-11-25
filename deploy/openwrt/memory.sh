@@ -10,7 +10,7 @@ tf_memory_plan() {
       }
       END {
         if (bad || nt!=1 || na!=1 || t<=0 || a<0 || a>t) exit 1
-        reserve=int((t*15+102399)/102400)
+        reserve=int((t+8191)/8192)
         if (reserve<64) reserve=64
         g=h=m=0
         if (t<=128*1024) state="unsupported"
