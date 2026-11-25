@@ -7,7 +7,7 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$here/common.sh"
 mountpoint=$1; lan=$2; binary=$3; signature=$4
 [ "$(uname -m)" = aarch64 ] || { tf_error 'ARM64 only in this draft'; exit 1; }
-for cmd in openssl sha256sum ip stat ubus awk; do command -v "$cmd" >/dev/null || exit 1; done
+for cmd in openssl sha256sum ip stat ubus awk cmp readlink; do command -v "$cmd" >/dev/null || exit 1; done
 [ -x /sbin/start-stop-daemon ] && [ -x /sbin/procd ] && [ -r /etc/rc.common ] || exit 1
 tf_mount_path "$mountpoint" && tf_trusted /mnt && tf_trusted "$mountpoint" && tf_local_ip "$lan" && tf_identity || { tf_error 'Invalid mount, LAN IP or service account'; exit 1; }
 device=$(tf_device "$mountpoint" /proc/mounts) || exit 1
@@ -28,7 +28,7 @@ mkdir "$app"
 cleanup() {
     if [ "$made_lib" = 1 ]; then
         rm -f "$TF_INIT" "$TF_SETTINGS" /usr/bin/tf
-        rm -f "$TF_LIB/common.sh" "$TF_LIB/run.sh"
+        rm -f "$TF_LIB/common.sh" "$TF_LIB/run.sh" "$TF_LIB/tf.installed" "$TF_LIB/init.installed"
         rmdir "$TF_LIB" 2>/dev/null || :
     fi
     rm -f "$app/config.yaml" "$app/trackferry-linux-arm64" "$app/trackferry-linux-arm64.sig"
@@ -65,6 +65,10 @@ printf '%s\n' "$mountpoint" "$device" "$lan" > "$TF_SETTINGS"
 cp "$here/trackferry.init" "$TF_INIT"
 cp "$here/tf" /usr/bin/tf
 chmod 755 "$TF_INIT" /usr/bin/tf
+# Preserve root-owned exact copies to detect replaced management entry points on uninstall.
+cp "$TF_INIT" "$TF_LIB/init.installed"
+cp /usr/bin/tf "$TF_LIB/tf.installed"
+chmod 600 "$TF_LIB/init.installed" "$TF_LIB/tf.installed"
 tf_preflight || exit 1
 trap - EXIT HUP INT TERM
 echo 'Installed (not started or enabled). Start with tf start after reviewing config.'

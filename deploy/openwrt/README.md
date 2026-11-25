@@ -20,7 +20,7 @@ tf start
 tf status
 tf mem
 ```
-用实际 LAN IP 替换示例。确认 readiness、进程 UID/GID、cgroup、播放及无 OOM 后再 `tf enable`。测试 stop/restart、异常挂载、冷重启、24h。若安装拒绝既有路径，不要删除旧部署绕过检查。
+用实际 LAN IP 替换示例。确认 readiness、进程 UID/GID、cgroup、播放及无 OOM；测试 stop/restart、异常挂载、冷重启、24h。此 Draft 禁止通过 tf enable 开启自启，也不要直接调用 init enable；必须先实现并验证 USB 晚挂载恢复。若安装拒绝既有路径，不要删除旧部署绕过检查。
 
 `sh uninstall.sh` 仅停止/禁用并移除管理层；保留程序、数据、配置、账号、cgroup。此后重新安装会拒绝现存目录，需后续显式迁移/恢复流程。不会卸载实验版 LuCI。
 
@@ -28,4 +28,11 @@ tf mem
 `takeover_speakers` 默认为 `[]`，任何音箱都不能接管，管理页会提示先写名字。先在 `<MOUNT>/trackferry/config.yaml`（root 拥有，644）写入音箱名，再回管理页逐个接管。
 
 ## 内置更新（残留风险）
-上游 Linux 构建总会注入更新安装器，`POST /api/update` 与 `/api/update/install` 不读 `update_check`，已登录的管理员仍可从管理页触发。安装后 `<MOUNT>/trackferry/data/update/installed.json` 存在时，`tf start` 会被门禁拒绝（init 日志会点名该文件）；删除它即回到固定 v1.5.0。彻底禁用需上游加开关，另立 PR。
+上游 Linux 构建总会注入更新安装器，`POST /api/update` 与 `/api/update/install` 不读 `update_check`，已登录的管理员仍可从管理页触发。安装后 `<MOUNT>/trackferry/data/update/installed.json` 存在时，`tf start` 会被门禁拒绝（启动器日志提示检查更新记录）；不要直接删除该记录：新程序可能已经迁移数据库。先停止服务，备份当前状态，再根据已验证的旧版完整备份（程序、签名和数据）恢复；没有可靠备份时不要盲目降级。彻底禁用需上游加开关，另立 PR。
+
+## 复审后的边界
+- procd 注册始终提供稳定的实例定义，避免 guard 失败时提交空实例清单；实际 child 在 exec 之前检查挂载、身份和 cgroup。tf start/restart 额外检查真实程序 PID、UID、cgroup；仍需实机验证重复 start、直接 init start、stop/restart 和 procd PID 连续性。直接 init 的返回值不代表 readiness。
+- 启动器开启根 cgroup memory controller 时会修改全局 subtree_control；卸载不会关闭它，避免影响其他已使用该 controller 的服务。拒绝 noexec/ro 挂载。OpenSSL 需支持 Ed25519 的 pkeyutl -rawin（例如 3.x）。
+- 卸载比对原始管理入口文件，若已被替换则拒绝操作；保留数据和现有其他组件。
+- 不允许同时手工启动另一实例并使用同一 data；尚未建立跨进程独占锁。安装/卸载并行及异常断电恢复仍需验证。
+- 内置更新仍是发布阻塞，不接受以仅关闭 update_check 或提示用户不点击作为正式解决方案。需独立设计可验证的封堵方案；禁止直接在生产实例部署此 Draft。

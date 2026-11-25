@@ -3,19 +3,19 @@ START=99
 STOP=10
 USE_PROCD=1
 start_service() {
-    . /usr/libexec/trackferry-openwrt/common.sh
-    if ! tf_preflight || ! tf_guard; then
-        [ -n "${TF_APP:-}" ] && [ -e "$TF_APP/data/update/installed.json" ] &&
-            logger -t trackferry "Refusing start: in-app update $TF_APP/data/update/installed.json exists; remove it to run the pinned release"
-        logger -t trackferry 'Refusing start: mount, identity, configuration or resource guard failed'
-        return 1
-    fi
+    # rc.common closes the service even when start_service returns failure.
+    # Always submit the same instance definition: an empty set can stop an existing instance.
+    # The actual child performs all safety checks before exec.
     procd_open_instance main
     procd_set_param command /usr/libexec/trackferry-openwrt/run.sh
     procd_set_param nice 10
     procd_set_param term_timeout 25
     procd_set_param stdout 1
     procd_set_param stderr 1
-    # No respawn; OOM or startup failure must not cause a restart loop.
+    # No respawn.
     procd_close_instance
+}
+service_running() {
+    . /usr/libexec/trackferry-openwrt/common.sh
+    tf_process && procd_running trackferry main
 }

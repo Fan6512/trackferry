@@ -46,6 +46,12 @@ if tf_device /mnt/usb "$tmp" >/dev/null; then echo 'Accepted an ambiguous mount'
 printf '/dev/sda1 /mnt/other ext4 rw 0 0\n' > "$tmp"
 if tf_device /mnt/usb "$tmp" >/dev/null; then echo 'Accepted a missing mount' >&2; exit 1; fi
 
+# Reject noexec and read-only mounts before writing or launching.
+for opts in rw,noexec ro rw,nosuid,noexec; do
+    printf '/dev/sda1 /mnt/usb ext4 %s 0 0\n' "$opts" > "$tmp"
+    if tf_device /mnt/usb "$tmp" >/dev/null; then echo "Accepted $opts mount" >&2; exit 1; fi
+done
+
 # The unified mount must be exactly /sys/fs/cgroup.
 printf 'cgroup2 /sys/fs/cgroup cgroup2 rw,nosuid 0 0\n' > "$tmp"
 tf_cgroup2 "$tmp"
@@ -73,6 +79,8 @@ fi
   [ "$TF_APP" = /mnt/usb/trackferry ] || { echo 'Wrong app path from tf_load' >&2; exit 1; }
   printf '/mnt/usb\n/dev/sda1\n192.168.1.5\nx\n' > "$TF_SETTINGS"
   if tf_load; then echo 'Accepted a fourth settings line' >&2; exit 1; fi
+  printf '/mnt/usb\n/dev/sda1\n192.168.1.5\nx' > "$TF_SETTINGS"
+  if tf_load; then echo 'Accepted a fourth settings line without final newline' >&2; exit 1; fi
   printf '/mnt/usb\n/dev/sda1\n' > "$TF_SETTINGS"
   if tf_load; then echo 'Accepted settings without an address' >&2; exit 1; fi
   printf '/mnt\n/dev/sda1\n192.168.1.5\n' > "$TF_SETTINGS"

@@ -1,13 +1,24 @@
 #!/bin/sh
 case "$#:$1" in
     1:start|1:restart)
-        /etc/init.d/trackferry "$1" || exit 1
-        /etc/init.d/trackferry running || {
-            echo 'TrackFerry: not running after start; see: logread -e trackferry' >&2
-            exit 1
+        . /usr/libexec/trackferry-openwrt/common.sh
+        if [ "$1" = start ] && "$TF_INIT" running; then exit 0; fi
+        tf_preflight || { tf_error 'Preflight failed; not changing the running service'; exit 1; }
+        if [ "$1" = restart ]; then
+            "$TF_INIT" stop || exit 1
+            tf_wait_empty || { tf_error 'Old instance still in cgroup'; exit 1; }
+        else
+            tf_empty || { tf_error 'Cgroup occupied; inspect existing instance'; exit 1; }
+        fi
+        "$TF_INIT" start || exit 1
+        tf_wait_running && "$TF_INIT" running || {
+            tf_error 'TrackFerry not running after start; see: logread -e trackferry'; exit 1
         };;
-    1:stop|1:status|1:enable|1:disable|1:enabled)
+    1:stop|1:status|1:disable|1:enabled)
         exec /etc/init.d/trackferry "$1";;
+    1:enable)
+        echo 'Draft: boot/late-mount recovery not validated; autostart is not supported yet' >&2
+        exit 1;;
     1:mem)
         for k in memory.current memory.peak memory.high memory.max memory.swap.max memory.events; do
             printf '%s\n' "$k"; cat "/sys/fs/cgroup/trackferry/$k" || exit 1

@@ -25,7 +25,7 @@ tf_trusted() {
     [ "$((0$mode & 022))" -eq 0 ]
 }
 tf_device() {
-    awk -v p="$1" '$2==p && $3=="ext4" && $1 ~ /^\/dev\// {print $1; n++} END {if(n!=1) exit 1}' "$2"
+    awk -v p="$1" '$2==p && $3=="ext4" && $1 ~ /^\/dev\// {n++; if($4 ~ /(^|,)noexec(,|$)/ || $4 !~ /(^|,)rw(,|$)/) bad=1; else print $1} END {if(n!=1 || bad) exit 1}' "$2"
 }
 tf_local_ip() {
     tf_ip "$1" && ip -4 addr show | awk -v ip="$1" '$1=="inet" {split($2,a,"/"); if(a[1]==ip) ok=1} END {exit !ok}'
@@ -38,7 +38,7 @@ tf_identity() {
 tf_load() {
     tf_trusted "$TF_SETTINGS" || return 1
     # read reports EOF without a trailing newline, but still sets the variable.
-    { IFS= read -r TF_MOUNT && IFS= read -r TF_DEVICE && { IFS= read -r TF_IP || [ -n "$TF_IP" ]; } && ! IFS= read -r extra; } < "$TF_SETTINGS" || return 1
+    { IFS= read -r TF_MOUNT && IFS= read -r TF_DEVICE && { IFS= read -r TF_IP || [ -n "$TF_IP" ]; } && { extra=; ! IFS= read -r extra && [ -z "$extra" ]; }; } < "$TF_SETTINGS" || return 1
     tf_mount_path "$TF_MOUNT" && tf_ip "$TF_IP" || return 1
     TF_APP="$TF_MOUNT/trackferry"
 }
@@ -83,4 +83,28 @@ tf_guard_values() {
     [ "$(cat "$TF_CG/memory.high")" = 50331648 ] &&
     [ "$(cat "$TF_CG/memory.max")" = 67108864 ] &&
     [ "$(cat "$TF_CG/memory.swap.max")" = 0 ]
+}
+
+# Do not treat a root launcher or an unrelated cgroup member as a running server.
+tf_process() {
+    tf_load || return 1
+    members=$(cat "$TF_CG/cgroup.procs" 2>/dev/null) || return 1
+    case "$members" in ''|*[!0-9]*) return 1;; esac
+    [ "$(readlink "/proc/$members/exe" 2>/dev/null)" = "$TF_APP/trackferry-linux-arm64" ] &&
+    awk '$1=="Uid:" {ok=($2==10001 && $3==10001 && $4==10001 && $5==10001)} END {exit !ok}' "/proc/$members/status" 2>/dev/null &&
+    grep -qx '0::/trackferry' "/proc/$members/cgroup" 2>/dev/null
+}
+tf_wait_empty() {
+    i=0
+    while ! tf_empty; do
+        i=$((i+1)); [ "$i" -lt 30 ] || return 1
+        sleep 1
+    done
+}
+tf_wait_running() {
+    i=0
+    while ! tf_process; do
+        i=$((i+1)); [ "$i" -lt 15 ] || return 1
+        sleep 1
+    done
 }
