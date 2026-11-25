@@ -19,7 +19,7 @@ device=$(tf_device "$mountpoint" /proc/mounts) || exit 1
 [ -n "$device" ] || exit 1
 tf_cgroup2 /proc/mounts && grep -qw memory /sys/fs/cgroup/cgroup.controllers && tf_empty || exit 1
 exec 9>"$TF_MANAGE_LOCK"
-flock -n 9 || { tf_error "Another install/uninstall is running"; exit 1; }
+flock -n 9 || { tf_error "Another install, uninstall or start is running"; exit 1; }
 app="$mountpoint/trackferry"
 made_lib=0
 for p in "$app" "$TF_INIT" "$TF_SETTINGS" "$TF_LIB" /usr/bin/tf "$TF_MOUNT_HOOK" "$TF_IFACE_HOOK"; do

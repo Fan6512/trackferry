@@ -5,7 +5,7 @@ set -eu
 [ -r /usr/libexec/trackferry-openwrt/common.sh ] || exit 1
 . /usr/libexec/trackferry-openwrt/common.sh
 exec 9>"$TF_MANAGE_LOCK"
-flock -n 9 || { tf_error "Another install/uninstall is running"; exit 1; }
+flock -n 9 || { tf_error "Another install, uninstall or start is running"; exit 1; }
 tf_load || exit 1
 [ -x "$TF_INIT" ] || exit 1
 for p in "$TF_LIB" "$TF_INIT" /usr/bin/tf "$TF_LIB/init.installed" "$TF_LIB/tf.installed" "$TF_LIB/hotplug.installed" "$TF_MOUNT_HOOK" "$TF_IFACE_HOOK"; do

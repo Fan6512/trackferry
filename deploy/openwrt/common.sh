@@ -9,6 +9,12 @@ TF_MOUNT_HOOK=/etc/hotplug.d/mount/95-trackferry
 TF_IFACE_HOOK=/etc/hotplug.d/iface/95-trackferry
 TF_MANAGE_LOCK=/var/lock/trackferry-openwrt-install.lock
 tf_error() { printf '%s\n' "TrackFerry: $*" >&2; return 1; }
+# The flag lives in tmpfs, where any local user may plant a symlink. Remove whatever
+# is there, then create with O_EXCL so a symlink raced in afterwards is never followed.
+tf_pending_set() {
+    rm -f "$TF_PENDING" 2>/dev/null
+    (set -C; umask 077; : > "$TF_PENDING") 2>/dev/null
+}
 tf_mount_path() {
     case "$1" in /mnt/*) ;; *) return 1;; esac
     name=$(printf '%s' "$1" | cut -c6-)

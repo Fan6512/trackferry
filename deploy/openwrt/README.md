@@ -28,17 +28,20 @@ tf mem
 `takeover_speakers` 默认为 `[]`，任何音箱都不能接管，管理页会提示先写名字。先在 `<MOUNT>/trackferry/config.yaml`（root 拥有，644）写入音箱名，再回管理页逐个接管。
 
 ## 官方更新（用户确认）
-默认 update_check: true，仅检查版本；登录管理员主动点击更新才安装。上游 Linux 使用官方 Ed25519 验签、备份数据库，syscall.Exec 原地切换，保留 PID、UID 与 cgroup。不要拒绝 installed.json，也不要手动删除它。状态识别兼容 data/update/trackferry-X.Y.Z，并使用 procd main PID；这是状态检查，不替代上游签名验证。基础二进制保持官方 v1.5.0；管理页显示实际运行版本。若更新启动失败，无 respawn，管理员检查日志后手动启动，官方三次尝试后的回退机制仍由上游负责；不可自动重启三次。保留独立完整备份。分档内存限制及升级期间子进程、磁盘缓存、OOM/断电恢复需实机测试。
+默认 update_check: true，仅检查版本；登录管理员主动点击更新才安装。上游在打开数据库之前执行 Launch：按 installed.json 核对版本文件的 sha256 与 Ed25519 签名，然后 syscall.Exec 原地切换。PID、UID/GID、cgroup 都不变，procd 只按 PID 跟踪子进程，所以更新后 running/status 仍有效；tf 同时接受 data/update/trackferry-X.Y.Z 作为实际运行路径（只做状态识别，不替代上游验签）。不要拒绝 installed.json，也不要手动删除它。基础二进制保持官方 v1.5.0，管理页显示实际运行版本。
+
+新版本要连续运行 20 秒才写 confirmed。在此之前每次启动（包括 tf restart 和“更新后自动重启”本身）都会让上游的 tries 加一；tries 到 3 后再启动一次，上游会还原更新前的数据库备份并退回旧版本。所以更新完成后 20 秒内不要反复 stop/restart。更新启动失败时无 respawn，管理员看日志后手动 tf start，回退由上游负责，管理层不自行重启。保留独立完整备份。分档内存限制、升级期间的 version 探测子进程与数据库备份、OOM/断电恢复仍需实机测试。
 
 ## 延迟挂载和 LAN
-开机时创建 /var/run/trackferry.boot-pending（仅本次开机），检查挂载与 LAN；不就绪则等待 OpenWrt mount add 或 iface ifup/ifupdate 事件，无常驻轮询。就绪时消费标记并发起一次启动；重复事件、手动启动/停止、OOM 或进程退出不会自动重新拉起。依赖目标系统 blockd 挂载事件，需在 ImmortalWrt 实机核实；未收到事件时手动 tf start。安装时不启用自启；卸载移除本插件两个 hook。仅解决启动时的晚就绪，不支持运行中强拔 USB 自动恢复。
+开机时（S99，procd 以 boot 动作执行 /etc/rc.d/S*）创建 /var/run/trackferry.boot-pending，仅本次开机有效；同一次 boot 调用里立即检查挂载与 LAN。不就绪则保留标记，等待 blockd 的 mount add 或 netifd 的 iface ifup/ifupdate 事件，由 /etc/hotplug.d/{mount,iface}/95-trackferry 调 /etc/init.d/trackferry boot_ready；无常驻轮询。就绪时消费标记并 start 一次；重复事件、手动 start/stop、OOM 或进程退出都不会自动重新拉起。stop 与 boot_ready 都持有 procd_lock，标记的检查与消费因此是串行的，不会在 stop 之后被事件拉起。标记用 O_EXCL 创建：tmpfs 可被普通用户写入，不能跟随预先放置的符号链接。依赖目标系统 blockd 挂载事件，需在 ImmortalWrt 实机核实；未收到事件时手动 tf start。安装时不启用自启；卸载移除本插件两个 hook。仅解决启动时的晚就绪，不支持运行中强拔 USB 自动恢复。挂载点存在但设备与安装记录不同时只记一条日志，不会启动。
 
 ## 复审后的边界
-- procd 注册始终提供稳定的实例定义，避免 guard 失败时提交空实例清单；实际 child 在 exec 之前检查挂载、身份和 cgroup。tf start/restart 额外检查真实程序 PID、UID、cgroup；仍需实机验证重复 start、直接 init start、stop/restart 和 procd PID 连续性。直接 init 的返回值不代表 readiness。
-- 启动器开启根 cgroup memory controller 时会修改全局 subtree_control；卸载不会关闭它，避免影响其他已使用该 controller 的服务。拒绝 noexec/ro 挂载。OpenSSL 需支持 Ed25519 的 pkeyutl -rawin（例如 3.x）。
+- procd 注册始终提供稳定的实例定义，避免 guard 失败时提交空实例清单；实际 child 在 exec 之前检查挂载、身份和 cgroup。procd 对相同定义的 service set 只更新数据、不重启实例，所以重复 tf start/boot_ready 不会产生第二个进程。run.sh 另在 `<app>/.instance.lock` 上持有 flock 直到进程退出（fd 跨 start-stop-daemon 的 exec 保留），第二个启动器直接退出并记日志；手工直接运行二进制绕过该锁，只能靠端口冲突失败，不要这样做。tf start/restart 额外检查真实程序 PID、UID、cgroup；直接 init 的返回值不代表 readiness。
+- tf start/restart 与安装/卸载共用 /var/lock/trackferry-openwrt-install.lock（前者共享、后者独占），start 不会插进卸载的 stop 与删除之间。
+- 启动器开启根 cgroup memory controller 时会修改全局 subtree_control；卸载不会关闭它，避免影响其他已使用该 controller 的服务。拒绝 noexec/ro 挂载。OpenSSL 需支持 Ed25519 的 pkeyutl -rawin（例如 3.x）。启动要求内核提供 memory.swap.max（CONFIG_MEMCG_SWAP），缺失即失败；这是有意的 fail-closed，需实机确认。
 - 卸载比对原始管理入口文件，若已被替换则拒绝操作；保留数据和现有其他组件。
-- 不允许同时手工启动另一实例并使用同一 data；尚未建立跨进程独占锁。安装/卸载并行及异常断电恢复仍需验证。
-- 官方更新及晚挂载实现尚未实机验收，仍为发布门禁；安装/卸载使用 flock 串行化，尚需测试并发管理与断电恢复。禁止直接在生产实例部署此 Draft。
+- 安装/卸载由 flock 串行化，trap 覆盖普通失败与 INT/TERM。SIGKILL 或断电可能留下半套管理文件：此时 install 会拒绝现存路径，uninstall 又需要 common.sh 才能运行。恢复办法是先确认没有进程，再手工删除 /usr/libexec/trackferry-openwrt、/etc/init.d/trackferry、/etc/trackferry-openwrt.conf、/usr/bin/tf 和两个 hotplug 文件后重装；程序目录与数据不动。
+- 官方更新及晚挂载实现尚未实机验收，仍为发布门禁。禁止直接在生产实例部署此 Draft。
 
 ## 自动内存保护（OP-002 / OP-008）
 
@@ -55,3 +58,14 @@ tf mem
 计算以 KiB 原值判断档位，不按厂商标称内存或 RSS。系统保留预算 = max(64 MiB, 向上取整的实际 MemTotal × 15%)；仅当 MemAvailable >= (保留预算 + 硬上限) 时允许新启动。缺失、格式错误或不支持时 fail-closed。此保留预算是保守准入条件，不是对系统内存的实际预留或保证；已有 cgroup 缓存仍可能使判断更保守。安装时预算不足仅警告（不启动），不支持的设备拒绝安装。启动失败不自动重试，用户释放资源后手动启动。tf mem 显示“下一次启动”的建议与当前 cgroup 实测值，运行中的可用内存不可当作未运行时的基线。
 
 已有 495484 KiB 设备样本：cgroup 运行 16257024 B、峰值 17313792 B（约 16.51 MiB）；保留原 32/48/64 档，预算为 73+64=137 MiB。仅此档位具备历史实机证据；其他档位为初始实验策略，连续播放、多音箱、在线升级和低内存场景仍需实机验收。手动资源参数与 LuCI 配置入口留待后续，不接受动态增大限制。
+
+## 实机验收（隔离测试机）
+1. `tf mem` 先显示下一次启动的分档（state/Go/high/max/预留），再显示当前 cgroup 的 memory.current/high/max/swap.max（5.19 以前没有 memory.peak，会跳过）。
+2. `tf start` 后 `tf status` 为 running；`/proc/<pid>/cgroup` 为 `0::/trackferry`，`/proc/<pid>/status` 的 Uid/Gid 四列都是 10001；`readlink /proc/<pid>/exe` 指向基础二进制或 data/update/trackferry-X.Y.Z。
+3. 冷启动内存门槛：本机 MemAvailable 必须达到“预留 + memory.max”（495484 KiB 样本为 137 MiB）；同时记录 boot 时的实际 MemAvailable，确认不会因为开机占用导致服务不启动。
+4. 更新：确认安装前后 PID 不变（`tf status`、`pidof trackferry`），20 秒后 installed.json 的 confirmed 为 true；再 `tf restart`，仍运行新版本（Launch 会再次 exec）。
+5. 回退：把 installed.json 的 confirmed 置 false 并连续启动到 tries=3，下一次启动应还原更新前的数据库并回到旧版本。
+6. 晚挂载：`tf enable` 后冷启动且不插 USB，服务不启动、标记存在；插上 USB 后只有一次启动，重复插拔不再启动。
+7. 晚 LAN：LAN 地址就绪前不启动；恢复后只启动一次。
+8. 手动 `tf stop` 后插拔 USB 不自动启动；`tf disable` 后重启不创建标记。
+9. 并发：两个终端同时 `tf start` 不产生第二个进程；卸载过程中执行 `tf start` 应等待或失败，不产生第三个实例。

@@ -95,7 +95,23 @@ fi
   if tf_empty 2>/dev/null; then echo 'Treated a plain directory as an empty cgroup' >&2; exit 1; fi
   rmdir "$TF_CG"
 )
-echo 'Static shell, mount, IP, device, cgroup, identity-file and settings checks passed.'
+
+# The boot flag is a regular root file; never write through something planted in tmpfs.
+( TF_PENDING=$tmp.pending
+  tf_pending_set || { echo 'Could not create the boot flag' >&2; exit 1; }
+  [ -f "$TF_PENDING" ] && [ ! -L "$TF_PENDING" ] || { echo 'Boot flag is not a regular file' >&2; exit 1; }
+  rm -f "$TF_PENDING"
+  mkdir "$TF_PENDING"
+  if tf_pending_set; then echo 'Overwrote a directory with the boot flag' >&2; exit 1; fi
+  rmdir "$TF_PENDING"
+  printf 'keep\n' > "$tmp.victim"
+  if ln -s "$tmp.victim" "$TF_PENDING" 2>/dev/null; then
+      tf_pending_set
+      [ "$(cat "$tmp.victim")" = keep ] || { echo 'Boot flag followed a symlink' >&2; exit 1; }
+  fi
+  rm -f "$TF_PENDING" "$tmp.victim"
+)
+echo 'Static shell, mount, IP, device, cgroup, boot-flag, identity-file and settings checks passed.'
 
 # Only the pinned executable and upstream's exact versioned update path count.
 ( TF_APP=/mnt/usb/trackferry

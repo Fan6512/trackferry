@@ -28,7 +28,7 @@ boot() {
     . /usr/libexec/trackferry-openwrt/common.sh
     procd_lock
     enabled || return 0
-    : > "$TF_PENDING"
+    tf_pending_set || { logger -t trackferry 'Cannot create the boot flag'; return 1; }
     boot_ready
 }
 boot_ready() {
@@ -38,7 +38,13 @@ boot_ready() {
     if ! enabled; then rm -f "$TF_PENDING"; return 0; fi
     if ! tf_load; then rm -f "$TF_PENDING"; logger -t trackferry 'Invalid boot settings'; return 1; fi
     # Only missing storage/address causes deferral; other failures are not retried.
-    tf_mounted && tf_local_ip "$TF_IP" || return 0
+    if ! tf_mounted; then
+        # Another device at the same path never becomes ready; do not defer in silence.
+        [ -z "$(tf_device "$TF_MOUNT" /proc/mounts)" ] ||
+            logger -t trackferry "Not starting: $TF_MOUNT is not the installed device"
+        return 0
+    fi
+    tf_local_ip "$TF_IP" || return 0
     rm -f "$TF_PENDING"
     start
 }

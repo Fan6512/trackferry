@@ -2,6 +2,9 @@
 case "$#:$1" in
     1:start|1:restart)
         . /usr/libexec/trackferry-openwrt/common.sh
+        # Share the install/uninstall lock so a start cannot slip between stop and removal.
+        exec 9>"$TF_MANAGE_LOCK"
+        flock -s 9 || exit 1
         if [ "$1" = start ] && "$TF_INIT" running; then exit 0; fi
         tf_preflight || { tf_error 'Preflight failed; not changing the running service'; exit 1; }
         if [ "$1" = restart ]; then
@@ -12,7 +15,7 @@ case "$#:$1" in
         fi
         "$TF_INIT" start || exit 1
         tf_wait_running && "$TF_INIT" running || {
-            tf_error 'TrackFerry not running after start; see: logread -e trackferry'; exit 1
+            tf_error 'TrackFerry not running after start; see logread -e trackferry (a hand-started instance may hold the port)'; exit 1
         };;
     1:stop|1:status|1:enable|1:disable|1:enabled)
         exec /etc/init.d/trackferry "$1";;
@@ -23,6 +26,8 @@ case "$#:$1" in
         echo "Current cgroup (bytes, not the next-start budget):"
         [ -d /sys/fs/cgroup/trackferry ] || exit 0
         for k in memory.current memory.peak memory.high memory.max memory.swap.max memory.events; do
+            # memory.peak only exists on 5.19 and later; the others decide the guard.
+            [ -r "/sys/fs/cgroup/trackferry/$k" ] || continue
             printf '%s\n' "$k"; cat "/sys/fs/cgroup/trackferry/$k" || exit 1
         done;;
     1:log) logread -e trackferry | tail -50;;
