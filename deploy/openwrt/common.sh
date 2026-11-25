@@ -37,7 +37,8 @@ tf_identity() {
 }
 tf_load() {
     tf_trusted "$TF_SETTINGS" || return 1
-    { IFS= read -r TF_MOUNT && IFS= read -r TF_DEVICE && IFS= read -r TF_IP && ! IFS= read -r extra; } < "$TF_SETTINGS" || return 1
+    # read reports EOF without a trailing newline, but still sets the variable.
+    { IFS= read -r TF_MOUNT && IFS= read -r TF_DEVICE && { IFS= read -r TF_IP || [ -n "$TF_IP" ]; } && ! IFS= read -r extra; } < "$TF_SETTINGS" || return 1
     tf_mount_path "$TF_MOUNT" && tf_ip "$TF_IP" || return 1
     TF_APP="$TF_MOUNT/trackferry"
 }

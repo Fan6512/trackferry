@@ -1,6 +1,12 @@
 #!/bin/sh
 case "$#:$1" in
-    1:start|1:stop|1:restart|1:status|1:enable|1:disable|1:enabled)
+    1:start|1:restart)
+        /etc/init.d/trackferry "$1" || exit 1
+        /etc/init.d/trackferry running || {
+            echo 'TrackFerry: not running after start; see: logread -e trackferry' >&2
+            exit 1
+        };;
+    1:stop|1:status|1:enable|1:disable|1:enabled)
         exec /etc/init.d/trackferry "$1";;
     1:mem)
         for k in memory.current memory.peak memory.high memory.max memory.swap.max memory.events; do

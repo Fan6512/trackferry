@@ -4,7 +4,12 @@ STOP=10
 USE_PROCD=1
 start_service() {
     . /usr/libexec/trackferry-openwrt/common.sh
-    tf_preflight && tf_guard || { logger -t trackferry 'Refusing start: mount, identity, configuration or resource guard failed'; return 1; }
+    if ! tf_preflight || ! tf_guard; then
+        [ -n "${TF_APP:-}" ] && [ -e "$TF_APP/data/update/installed.json" ] &&
+            logger -t trackferry "Refusing start: in-app update $TF_APP/data/update/installed.json exists; remove it to run the pinned release"
+        logger -t trackferry 'Refusing start: mount, identity, configuration or resource guard failed'
+        return 1
+    fi
     procd_open_instance main
     procd_set_param command /usr/libexec/trackferry-openwrt/run.sh
     procd_set_param nice 10

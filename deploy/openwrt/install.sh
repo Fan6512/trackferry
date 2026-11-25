@@ -14,6 +14,7 @@ device=$(tf_device "$mountpoint" /proc/mounts) || exit 1
 [ -n "$device" ] || exit 1
 tf_cgroup2 /proc/mounts && grep -qw memory /sys/fs/cgroup/cgroup.controllers && tf_empty || exit 1
 app="$mountpoint/trackferry"
+made_lib=0
 for p in "$app" "$TF_INIT" "$TF_SETTINGS" "$TF_LIB" /usr/bin/tf; do
     [ ! -e "$p" ] && [ ! -L "$p" ] || { tf_error "Existing path: $p (not modified)"; exit 1; }
 done
@@ -22,10 +23,14 @@ sh "$here/verify.sh" "$binary" "$signature"
 umask 077
 mkdir "$app"
 # Until installation succeeds, remove only newly created files; never start the service here.
+# The global paths below belong to whichever run created $TF_LIB; a second install on
+# another mount must not remove them.
 cleanup() {
-    rm -f "$TF_INIT" "$TF_SETTINGS" /usr/bin/tf
-    rm -f "$TF_LIB/common.sh" "$TF_LIB/run.sh"
-    rmdir "$TF_LIB" 2>/dev/null || :
+    if [ "$made_lib" = 1 ]; then
+        rm -f "$TF_INIT" "$TF_SETTINGS" /usr/bin/tf
+        rm -f "$TF_LIB/common.sh" "$TF_LIB/run.sh"
+        rmdir "$TF_LIB" 2>/dev/null || :
+    fi
     rm -f "$app/config.yaml" "$app/trackferry-linux-arm64" "$app/trackferry-linux-arm64.sig"
     rmdir "$app/data" "$app/music" "$app" 2>/dev/null || :
 }
@@ -51,6 +56,7 @@ EOF
 chmod 644 "$app/config.yaml"
 mkdir -p /usr/libexec
 mkdir "$TF_LIB"
+made_lib=1
 cp "$here/common.sh" "$TF_LIB/common.sh"
 cp "$here/run.sh" "$TF_LIB/run.sh"
 chmod 755 "$TF_LIB" "$TF_LIB/run.sh"

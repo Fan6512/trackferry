@@ -1,1 +1,3 @@
 docs/samples/*.sse -whitespace
+# Shell scripts run on the router: a CRLF checkout breaks ash with "set: Illegal option -".
+deploy/openwrt/* text eol=lf

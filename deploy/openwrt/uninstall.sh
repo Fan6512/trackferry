@@ -14,5 +14,5 @@ while ! tf_empty; do
 done
 "$TF_INIT" disable
 rm -f "$TF_INIT" /usr/bin/tf "$TF_SETTINGS" "$TF_LIB/run.sh" "$TF_LIB/common.sh"
-rmdir "$TF_LIB"
+rmdir "$TF_LIB" 2>/dev/null || echo "TrackFerry: $TF_LIB not empty; remove it before reinstalling" >&2
 echo "Management removed; preserved $TF_APP, account and cgroup."
