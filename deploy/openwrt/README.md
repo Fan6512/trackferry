@@ -37,7 +37,7 @@ tf mem
 
 ## 复审后的边界
 - procd 注册始终提供稳定的实例定义，避免 guard 失败时提交空实例清单；实际 child 在 exec 之前检查挂载、身份和 cgroup。procd 对相同定义的 service set 只更新数据、不重启实例，所以重复 tf start/boot_ready 不会产生第二个进程。run.sh 另在 `<app>/.instance.lock` 上持有 flock 直到进程退出（fd 跨 start-stop-daemon 的 exec 保留），第二个启动器直接退出并记日志；手工直接运行二进制绕过该锁，只能靠端口冲突失败，不要这样做。tf start/restart 额外检查真实程序 PID、UID、cgroup；直接 init 的返回值不代表 readiness。
-- tf start/restart 与安装/卸载共用 /var/lock/trackferry-openwrt-install.lock（前者共享、后者独占），start 不会插进卸载的 stop 与删除之间。
+- tf start/restart 与安装/卸载共用 /etc/trackferry-openwrt.lock（前者共享、后者独占），start 不会插进卸载的 stop 与删除之间。
 - 启动器开启根 cgroup memory controller 时会修改全局 subtree_control；卸载不会关闭它，避免影响其他已使用该 controller 的服务。拒绝 noexec/ro 挂载。OpenSSL 需支持 Ed25519 的 pkeyutl -rawin（例如 3.x）。启动要求内核提供 memory.swap.max（CONFIG_MEMCG_SWAP），缺失即失败；这是有意的 fail-closed，需实机确认。
 - 卸载比对原始管理入口文件，若已被替换则拒绝操作；保留数据和现有其他组件。
 - 安装/卸载由 flock 串行化，trap 覆盖普通失败与 INT/TERM。SIGKILL 或断电可能留下半套管理文件：此时 install 会拒绝现存路径，uninstall 又需要 common.sh 才能运行。恢复办法是先确认没有进程，再手工删除 /usr/libexec/trackferry-openwrt、/etc/init.d/trackferry、/etc/trackferry-openwrt.conf、/usr/bin/tf 和两个 hotplug 文件后重装；程序目录与数据不动。
@@ -69,3 +69,5 @@ tf mem
 7. 晚 LAN：LAN 地址就绪前不启动；恢复后只启动一次。
 8. 手动 `tf stop` 后插拔 USB 不自动启动；`tf disable` 后重启不创建标记。
 9. 并发：两个终端同时 `tf start` 不产生第二个进程；卸载过程中执行 `tf start` 应等待或失败，不产生第三个实例。
+
+管理锁位于 root 控制的 /etc/trackferry-openwrt.lock，避免 OpenWrt 的 /var -> /tmp 与 1777 /tmp/lock 中的可预置符号链接。锁文件为空，仅内核 flock 状态有意义；卸载时保留锁文件，防止并发进程锁定不同 inode。无需更改系统目录权限。

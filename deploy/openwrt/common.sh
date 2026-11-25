@@ -7,7 +7,7 @@ TF_LIB=/usr/libexec/trackferry-openwrt
 TF_PENDING=/var/run/trackferry.boot-pending
 TF_MOUNT_HOOK=/etc/hotplug.d/mount/95-trackferry
 TF_IFACE_HOOK=/etc/hotplug.d/iface/95-trackferry
-TF_MANAGE_LOCK=/var/lock/trackferry-openwrt-install.lock
+TF_MANAGE_LOCK=/etc/trackferry-openwrt.lock
 tf_error() { printf '%s\n' "TrackFerry: $*" >&2; return 1; }
 # The flag lives in tmpfs, where any local user may plant a symlink. Remove whatever
 # is there, then create with O_EXCL so a symlink raced in afterwards is never followed.
